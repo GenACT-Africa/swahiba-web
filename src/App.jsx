@@ -30,7 +30,7 @@ import ManageResources from "./pages/admin/ManageResources.jsx";
 import ManageReferrals from "./pages/admin/ManageReferrals.jsx";
 import AdminInvites from "./pages/admin/Invites.jsx";
 
-import ProtectedRoute from "./components/protectedRoute.jsx";
+import ProtectedRoute from "./components/ProtectedRoute.jsx";
 
 export default function App() {
   return (
