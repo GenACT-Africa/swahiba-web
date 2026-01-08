@@ -6,6 +6,8 @@ export default function Profile() {
 
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [avatarUrl, setAvatarUrl] = useState(null);
+
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -32,7 +34,19 @@ export default function Profile() {
         .single();
 
       if (error) throw error;
+
       setProfile(data);
+
+      // ✅ Resolve avatar public URL safely
+      if (data.avatar_path) {
+        const { data: storageData } = supabase.storage
+          .from("avatars")
+          .getPublicUrl(data.avatar_path);
+
+        setAvatarUrl(storageData.publicUrl);
+      } else {
+        setAvatarUrl(null);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -56,19 +70,22 @@ export default function Profile() {
 
     try {
       const ext = file.name.split(".").pop();
-      const filePath = `${user.id}.${ext}`;
+      const avatarPath = `${user.id}.${ext}`;
 
       const { error: uploadError } = await supabase.storage
         .from("avatars")
-        .upload(filePath, file, { upsert: true });
+        .upload(avatarPath, file, { upsert: true });
 
       if (uploadError) throw uploadError;
 
+      // ✅ Generate public URL immediately
       const { data } = supabase.storage
         .from("avatars")
-        .getPublicUrl(filePath);
+        .getPublicUrl(avatarPath);
 
-      updateField("avatar_url", data.publicUrl);
+      // Update local state
+      setAvatarUrl(data.publicUrl);
+      updateField("avatar_path", avatarPath);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -88,7 +105,7 @@ export default function Profile() {
           phone_number: profile.phone_number || null,
           bio: profile.bio,
           availability: profile.availability,
-          avatar_url: profile.avatar_url,
+          avatar_path: profile.avatar_path || null,
           expertise_contraceptives: profile.expertise_contraceptives,
           expertise_hiv_stis: profile.expertise_hiv_stis,
           expertise_gbv: profile.expertise_gbv,
@@ -100,6 +117,7 @@ export default function Profile() {
         .eq("id", user.id);
 
       if (error) throw error;
+
       setEditing(false);
     } catch (err) {
       setError(err.message);
@@ -109,7 +127,8 @@ export default function Profile() {
   }
 
   if (loading) return <div className="p-10">Loading profile…</div>;
-  if (!profile) return <div className="p-10 text-red-600">Profile not found</div>;
+  if (!profile)
+    return <div className="p-10 text-red-600">Profile not found</div>;
 
   return (
     <div className="max-w-2xl mx-auto bg-white rounded-3xl border p-8">
@@ -122,11 +141,12 @@ export default function Profile() {
       {/* Avatar */}
       <div className="flex flex-col items-center">
         <div className="w-32 h-32 rounded-full bg-slate-100 overflow-hidden flex items-center justify-center">
-          {profile.avatar_url ? (
+          {avatarUrl ? (
             <img
-              src={profile.avatar_url}
+              src={avatarUrl}
               alt="Avatar"
               className="w-full h-full object-cover"
+              onError={() => setAvatarUrl(null)}
             />
           ) : (
             <span className="text-slate-400">No photo</span>
