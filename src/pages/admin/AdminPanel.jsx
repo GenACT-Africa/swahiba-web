@@ -18,6 +18,8 @@ import { supabase } from "../../lib/supabaseClient";
  * If some optional tables don't exist yet, dashboard still renders.
  */
 
+const ADMIN_EMAIL = "admin@genactafrica.org";
+
 const NOTE_TABLE_CANDIDATES = ["interactions", "case_notes"];
 
 const QUICK_FILTERS = [
@@ -78,8 +80,6 @@ export default function AdminPanel() {
 
   // auth/role
   const [me, setMe] = useState(null);
-  const [role, setRole] = useState(null);
-  const [loadingRole, setLoadingRole] = useState(true);
 
   // core data
   const [loading, setLoading] = useState(true);
@@ -109,43 +109,23 @@ export default function AdminPanel() {
   // 1) Auth + role guard
   useEffect(() => {
     let alive = true;
-
+  
     (async () => {
       try {
-        setLoadingRole(true);
-        setErr("");
-
-        const { data: s, error: sErr } = await supabase.auth.getSession();
-        if (sErr) throw sErr;
-
-        const user = s?.session?.user ?? null;
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+  
+        const user = data?.session?.user ?? null;
         if (!alive) return;
+  
         setMe(user);
-
-        if (!user) {
-          setRole(null);
-          return;
-        }
-
-        const { data: prof, error: pErr } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .single();
-
-        if (pErr) throw pErr;
-
-        if (!alive) return;
-        setRole(prof?.role ?? null);
       } catch (e) {
-        if (!alive) return;
         setErr(e?.message || String(e));
       } finally {
-        if (!alive) return;
-        setLoadingRole(false);
+        if (alive) setLoading(false);
       }
     })();
-
+  
     return () => {
       alive = false;
     };
@@ -278,9 +258,10 @@ export default function AdminPanel() {
   }
 
   useEffect(() => {
-    if (role === "admin") loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role]);
+    if (me?.email === ADMIN_EMAIL) {
+      loadAll();
+    }
+  }, [me]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -440,13 +421,15 @@ export default function AdminPanel() {
   }, [cases, globalQ, caseFilter, sortKey, overdueCaseIds]);
 
   // ---- Guards ----
-  if (loadingRole) {
-    return (
-      <div className="min-h-screen bg-white">
-        <div className="mx-auto max-w-[1200px] px-4 py-10 text-sm text-slate-600">Loading…</div>
+if (loading) {
+  return (
+    <div className="min-h-screen bg-white">
+      <div className="mx-auto max-w-[1200px] px-4 py-10 text-sm text-slate-600">
+        Loading…
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   if (!me) {
     return (
@@ -465,12 +448,14 @@ export default function AdminPanel() {
     );
   }
 
-  if (role !== "admin") {
+  if (me.email !== ADMIN_EMAIL) {
     return (
       <div className="min-h-screen bg-white">
         <div className="mx-auto max-w-[1200px] px-4 py-10">
           <h1 className="text-2xl font-bold text-slate-900">Not authorized</h1>
-          <p className="mt-2 text-sm text-slate-600">Your account does not have admin access.</p>
+          <p className="mt-2 text-sm text-slate-600">
+            Your account does not have admin access.
+          </p>
           <div className="mt-6 flex gap-2">
             <button
               onClick={() => navigate("/swahiba/cases")}
@@ -1046,3 +1031,4 @@ function HealthRow({ label, value }) {
     </div>
   );
 }
+

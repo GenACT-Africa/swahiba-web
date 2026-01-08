@@ -285,10 +285,10 @@ export default function Cases() {
               + New case
             </button>
             <button
-              onClick={signOut}
-              className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+              onClick={() => navigate("/swahiba/Inbox")}
+              className="relative rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
             >
-              Sign out
+              Inbox
             </button>
           </div>
         </div>

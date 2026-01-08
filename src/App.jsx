@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import AppLayout from "./layouts/AppLayout.jsx";
 
-// Public pages
+// 🌍 Public pages
 import Home from "./pages/Home.jsx";
 import Talk from "./pages/Talk.jsx";
 import Triage from "./pages/Triage.jsx";
@@ -12,18 +12,22 @@ import Marketplace from "./pages/Marketplace.jsx";
 import Referrals from "./pages/Referrals.jsx";
 import DataUsePolicy from "./pages/DataUsePolicy.jsx";
 import EmergencyContacts from "./pages/EmergencyContacts.jsx";
-import SafeguardingPolicy from "./pages/SafeGuardingPolicy.jsx";
+import SafeguardingPolicy from "./pages/SafeguardingPolicy.jsx";
 import AboutUs from "./pages/AboutUs.jsx";
 
-// Auth
+// 👤 Swahiba public profile
+import SwahibaProfile from "./pages/swahiba/Profile.jsx";
+
+// 🔐 Auth
 import Signup from "./pages/swahiba/Signup.jsx";
 import Login from "./pages/swahiba/Login.jsx";
 
-// Swahiba (peer)
+// 🧑‍⚕️ Swahiba (protected)
 import Cases from "./pages/swahiba/Cases.jsx";
 import CaseDetails from "./pages/swahiba/CaseDetails.jsx";
+import Inbox from "./pages/swahiba/Inbox.jsx";
 
-// Admin
+// 🛠 Admin
 import AdminPanel from "./pages/admin/AdminPanel.jsx";
 import ManageProducts from "./pages/admin/ManageProducts.jsx";
 import ManageResources from "./pages/admin/ManageResources.jsx";
@@ -36,11 +40,11 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* 🔐 AUTH (NO TopBar, NO Footer) */}
+        {/* 🔐 AUTH (no TopBar / Footer) */}
         <Route path="/swahiba/login" element={<Login />} />
         <Route path="/swahiba/signup" element={<Signup />} />
 
-        {/* 🌍 PUBLIC + APP (TopBar + Footer) */}
+        {/* 🌍 APP LAYOUT (TopBar + Footer) */}
         <Route element={<AppLayout />}>
           {/* Public */}
           <Route path="/" element={<Home />} />
@@ -56,7 +60,10 @@ export default function App() {
           <Route path="/safeguarding" element={<SafeguardingPolicy />} />
           <Route path="/about" element={<AboutUs />} />
 
-          {/* 🧑‍⚕️ SWAHIBA PEER (protected) */}
+          {/* Public Swahiba profile */}
+          <Route path="/swahiba/profile" element={<SwahibaProfile />} />
+
+          {/* 🧑‍⚕️ SWAHIBA (PROTECTED) */}
           <Route
             path="/swahiba/cases"
             element={
@@ -73,8 +80,16 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/swahiba/inbox"
+            element={
+              <ProtectedRoute>
+                <Inbox />
+              </ProtectedRoute>
+            }
+          />
 
-          {/* 🛠 ADMIN (ADMIN-ONLY) */}
+          {/* 🛠 ADMIN (ADMIN ONLY) */}
           <Route
             path="/admin"
             element={
@@ -116,7 +131,7 @@ export default function App() {
             }
           />
 
-          {/* 🚫 FALLBACK */}
+          {/* 🚫 Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

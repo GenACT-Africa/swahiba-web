@@ -378,14 +378,12 @@ export default function Result() {
           </div>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <a
-              href={waLink(waMessage)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center justify-center rounded-2xl bg-amber-500 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-amber-600"
-            >
-              {t.talkToSwahiba}
-            </a>
+          <button
+  onClick={handleTalkToSwahiba}
+  className="inline-flex items-center justify-center rounded-2xl bg-amber-500 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-amber-600"
+>
+  {t.talkToSwahiba}
+</button>
 
             <Link
               to="/resources"
@@ -405,4 +403,40 @@ export default function Result() {
       </main>
     </div>
   );
+
+  async function handleTalkToSwahiba() {
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dynamic-api`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+        }
+      );
+  
+      const data = await res.json();
+  
+      if (!res.ok) {
+        throw new Error(data?.error || "No Swahiba available");
+      }
+  
+      // Redirect user to Talk page with Swahiba info
+      navigate("/talk", {
+        state: {
+          swahiba: data,
+        },
+      });
+    } catch (err) {
+      alert(
+        lang === "SW"
+          ? "Hakuna Swahiba anayepatikana kwa sasa. Tafadhali jaribu tena."
+          : "No Swahiba is available right now. Please try again."
+      );
+    }
+  }
+
 }

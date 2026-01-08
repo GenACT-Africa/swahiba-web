@@ -11,162 +11,273 @@ export default function Signup() {
     lang === "SW"
       ? {
           title: "Jiunge na Swahiba kama Peer",
-          subtitle: "Unda akaunti yako ya Swahiba kama Peer.",
+          subtitle: "Unda wasifu wako wa Swahiba kama Peer.",
           name: "Jina kamili",
           email: "Barua pepe",
           password: "Nenosiri",
           confirm: "Thibitisha nenosiri",
+          region: "Mkoa",
+          district: "Wilaya",
+          bio: "Kuhusu mimi",
           agree: "Nakubali sera ya matumizi ya data na ulinzi",
           submit: "Unda akaunti",
           haveAccount: "Tayari una akaunti?",
           login: "Ingia",
-          errorPassword: "Nenosiri hazifanani.",
-          errorAgree: "Tafadhali kubali sera ya matumizi ya data.",
-          errorGeneric: "Imeshindikana kuunda akaunti. Tafadhali jaribu tena.",
         }
       : {
           title: "Join Swahiba as a Peer",
-          subtitle: "Create your Swahiba peer account.",
+          subtitle: "Create your Swahiba peer profile.",
           name: "Full name",
           email: "Email address",
           password: "Password",
           confirm: "Confirm password",
+          region: "Region",
+          district: "District",
+          bio: "About me",
           agree: "I agree to the data use and safeguarding policies",
           submit: "Create account",
           haveAccount: "Already have an account?",
           login: "Login",
-          errorPassword: "Passwords do not match.",
-          errorAgree: "Please agree to the data use policy.",
-          errorGeneric: "Failed to create account. Please try again.",
         };
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [agree, setAgree] = useState(false);
+  const inputClass =
+    "w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-400";
 
+  const [form, setForm] = useState({
+    full_name: "",
+    email: "",
+    password: "",
+    confirm: "",
+    region: "",
+    district: "",
+    bio: "",
+  });
+
+  const [expertise, setExpertise] = useState({
+    expertise_contraceptives: false,
+    expertise_hiv_stis: false,
+    expertise_gbv: false,
+    expertise_mental_health: false,
+    expertise_physical_health: false,
+    expertise_nutrition: false,
+  });
+
+  const [agree, setAgree] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  function updateField(key, value) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function toggleExpertise(key) {
+    setExpertise((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
 
-    if (password !== confirm) {
-      setError(t.errorPassword);
+    if (form.password !== form.confirm) {
+      setError("Passwords do not match");
       return;
     }
 
     if (!agree) {
-      setError(t.errorAgree);
+      setError("You must agree to the data use policy");
       return;
     }
 
     setLoading(true);
 
     try {
-      const { error: authErr } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: name,
-            role: "peer",
+      /**
+       * 1️⃣ Create Auth User
+       * Profiles are auto-created via DB trigger
+       */
+      const { data, error: signUpError } =
+        await supabase.auth.signUp({
+          email: form.email,
+          password: form.password,
+          options: {
+            data: {
+              full_name: form.full_name,
+              role: "swahiba",
+            },
           },
-        },
-      });
+        });
 
-      if (authErr) throw authErr;
+      if (signUpError) throw signUpError;
+      if (!data.user) throw new Error("Signup failed");
 
-      // Redirect after signup
+      /**
+       * 2️⃣ Update profile with extra fields
+       */
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({
+          full_name: form.full_name,
+          region: form.region,
+          district: form.district,
+          bio: form.bio,
+          ...expertise,
+        })
+        .eq("id", data.user.id);
+
+      if (profileError) throw profileError;
+
+      /**
+       * 3️⃣ Redirect to login
+       */
       navigate("/swahiba/login", { replace: true });
     } catch (err) {
-      setError(t.errorGeneric);
+      console.error(err);
+      setError(err.message || "Signup failed");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center px-4">
-      <div className="w-full max-w-md rounded-3xl border border-slate-200 p-8 shadow-sm">
-        <h1
-          className="text-3xl tracking-tight text-slate-900"
-          style={{ fontFamily: "ui-serif, Georgia, Cambria, serif" }}
-        >
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+      <div className="w-full max-w-md bg-white rounded-3xl p-8 border">
+        <h1 className="text-3xl font-semibold text-center">
           {t.title}
         </h1>
-
-        <p className="mt-2 text-sm text-slate-600">{t.subtitle}</p>
+        <p className="text-sm text-center text-slate-600 mt-2">
+          {t.subtitle}
+        </p>
 
         {error && (
-          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="mt-4 bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-xl">
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <input
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            className={inputClass}
             placeholder={t.name}
-            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-400"
+            value={form.full_name}
+            onChange={(e) =>
+              updateField("full_name", e.target.value)
+            }
           />
 
           <input
-            required
+            className={inputClass}
             type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
             placeholder={t.email}
-            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-400"
+            value={form.email}
+            onChange={(e) =>
+              updateField("email", e.target.value)
+            }
           />
 
-          <input
-            required
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={t.password}
-            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-400"
+          <div className="grid grid-cols-2 gap-3">
+            <input
+              className={inputClass}
+              type="password"
+              placeholder={t.password}
+              value={form.password}
+              onChange={(e) =>
+                updateField("password", e.target.value)
+              }
+            />
+            <input
+              className={inputClass}
+              type="password"
+              placeholder={t.confirm}
+              value={form.confirm}
+              onChange={(e) =>
+                updateField("confirm", e.target.value)
+              }
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <input
+              className={inputClass}
+              placeholder={t.region}
+              value={form.region}
+              onChange={(e) =>
+                updateField("region", e.target.value)
+              }
+            />
+            <input
+              className={inputClass}
+              placeholder={t.district}
+              value={form.district}
+              onChange={(e) =>
+                updateField("district", e.target.value)
+              }
+            />
+          </div>
+
+          <textarea
+            className={inputClass}
+            placeholder={t.bio}
+            rows={3}
+            value={form.bio}
+            onChange={(e) =>
+              updateField("bio", e.target.value)
+            }
           />
 
-          <input
-            required
-            type="password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            placeholder={t.confirm}
-            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-400"
-          />
+          {/* Expertise */}
+          <div className="grid grid-cols-2 gap-2">
+            {Object.keys(expertise).map((key) => (
+              <label
+                key={key}
+                className={`border rounded-xl px-3 py-2 text-sm text-center cursor-pointer ${
+                  expertise[key]
+                    ? "bg-amber-50 border-amber-400 text-amber-700"
+                    : "border-slate-200"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="hidden"
+                  checked={expertise[key]}
+                  onChange={() =>
+                    toggleExpertise(key)
+                  }
+                />
+                {key
+                  .replace("expertise_", "")
+                  .replace("_", " ")}
+              </label>
+            ))}
+          </div>
 
-          <label className="flex items-start gap-2 text-xs text-slate-600">
+          <label className="flex gap-2 text-xs text-slate-600">
             <input
               type="checkbox"
               checked={agree}
-              onChange={(e) => setAgree(e.target.checked)}
-              className="mt-1"
+              onChange={(e) =>
+                setAgree(e.target.checked)
+              }
             />
             {t.agree}
           </label>
 
           <button
-            type="submit"
             disabled={loading}
-            className="w-full rounded-2xl bg-amber-500 px-6 py-3 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
+            className="w-full bg-amber-500 text-white rounded-2xl py-3 font-semibold"
           >
             {loading ? "…" : t.submit}
           </button>
         </form>
 
-        <div className="mt-6 text-center text-sm text-slate-600">
+        <p className="text-center text-sm mt-6">
           {t.haveAccount}{" "}
-          <Link to="/swahiba/login" className="font-semibold text-amber-600">
+          <Link
+            to="/swahiba/login"
+            className="text-amber-600 font-semibold"
+          >
             {t.login}
           </Link>
-        </div>
+        </p>
       </div>
     </div>
   );
