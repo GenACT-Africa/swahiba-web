@@ -6,8 +6,6 @@ export default function Profile() {
 
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [avatarUrl, setAvatarUrl] = useState(null);
-
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -34,19 +32,7 @@ export default function Profile() {
         .single();
 
       if (error) throw error;
-
       setProfile(data);
-
-      // ✅ Resolve avatar public URL safely
-      if (data.avatar_path) {
-        const { data: storageData } = supabase.storage
-          .from("avatars")
-          .getPublicUrl(data.avatar_path);
-
-        setAvatarUrl(storageData.publicUrl);
-      } else {
-        setAvatarUrl(null);
-      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -70,22 +56,16 @@ export default function Profile() {
 
     try {
       const ext = file.name.split(".").pop();
-      const avatarPath = `${user.id}.${ext}`;
+      const filePath = `${user.id}.${ext}`;
 
       const { error: uploadError } = await supabase.storage
         .from("avatars")
-        .upload(avatarPath, file, { upsert: true });
+        .upload(filePath, file, { upsert: true });
 
       if (uploadError) throw uploadError;
 
-      // ✅ Generate public URL immediately
-      const { data } = supabase.storage
-        .from("avatars")
-        .getPublicUrl(avatarPath);
-
-      // Update local state
-      setAvatarUrl(data.publicUrl);
-      updateField("avatar_path", avatarPath);
+      // Save ONLY the path in DB
+      updateField("avatar_path", filePath);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -105,7 +85,7 @@ export default function Profile() {
           phone_number: profile.phone_number || null,
           bio: profile.bio,
           availability: profile.availability,
-          avatar_path: profile.avatar_path || null,
+          avatar_path: profile.avatar_path,
           expertise_contraceptives: profile.expertise_contraceptives,
           expertise_hiv_stis: profile.expertise_hiv_stis,
           expertise_gbv: profile.expertise_gbv,
@@ -117,7 +97,6 @@ export default function Profile() {
         .eq("id", user.id);
 
       if (error) throw error;
-
       setEditing(false);
     } catch (err) {
       setError(err.message);
@@ -127,8 +106,13 @@ export default function Profile() {
   }
 
   if (loading) return <div className="p-10">Loading profile…</div>;
-  if (!profile)
-    return <div className="p-10 text-red-600">Profile not found</div>;
+  if (!profile) return <div className="p-10 text-red-600">Profile not found</div>;
+
+  const avatarUrl =
+    profile.avatar_path
+      ? supabase.storage.from("avatars").getPublicUrl(profile.avatar_path).data
+          .publicUrl
+      : null;
 
   return (
     <div className="max-w-2xl mx-auto bg-white rounded-3xl border p-8">
@@ -146,7 +130,6 @@ export default function Profile() {
               src={avatarUrl}
               alt="Avatar"
               className="w-full h-full object-cover"
-              onError={() => setAvatarUrl(null)}
             />
           ) : (
             <span className="text-slate-400">No photo</span>
@@ -170,107 +153,6 @@ export default function Profile() {
             />
           </>
         )}
-      </div>
-
-      {/* Name + Phone */}
-      <div className="mt-6 text-center space-y-2">
-        {editing ? (
-          <>
-            <input
-              className="border rounded-xl px-4 py-2 w-full text-center"
-              value={profile.full_name || ""}
-              onChange={(e) => updateField("full_name", e.target.value)}
-            />
-            <input
-              className="border rounded-xl px-4 py-2 w-full text-center"
-              placeholder="Phone number"
-              value={profile.phone_number || ""}
-              onChange={(e) => updateField("phone_number", e.target.value)}
-            />
-          </>
-        ) : (
-          <>
-            <h2 className="text-xl font-semibold">{profile.full_name}</h2>
-            <p className="text-sm text-slate-500">
-              {profile.phone_number || "No phone number added"}
-            </p>
-          </>
-        )}
-      </div>
-
-      {/* Availability */}
-      <div className="mt-4 flex justify-center gap-3 items-center">
-        <span className="text-sm font-medium">Availability</span>
-        <button
-          disabled={!editing}
-          onClick={() =>
-            updateField(
-              "availability",
-              profile.availability === "available"
-                ? "offline"
-                : "available"
-            )
-          }
-          className={`w-12 h-6 rounded-full relative ${
-            profile.availability === "available"
-              ? "bg-green-500"
-              : "bg-slate-300"
-          }`}
-        >
-          <span
-            className={`absolute top-0.5 w-5 h-5 bg-white rounded-full ${
-              profile.availability === "available" ? "left-6" : "left-1"
-            }`}
-          />
-        </button>
-        <span className="text-sm">
-          {profile.availability === "available" ? "Available" : "Offline"}
-        </span>
-      </div>
-
-      {/* About */}
-      <div className="mt-6">
-        <h3 className="font-semibold mb-1">About me</h3>
-        {editing ? (
-          <textarea
-            className="w-full border rounded-xl px-4 py-2"
-            rows={3}
-            value={profile.bio || ""}
-            onChange={(e) => updateField("bio", e.target.value)}
-          />
-        ) : (
-          <p className="text-sm text-slate-600">
-            {profile.bio || "No bio added yet."}
-          </p>
-        )}
-      </div>
-
-      {/* Expertise */}
-      <div className="mt-6">
-        <h3 className="font-semibold mb-3">Areas of expertise</h3>
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            ["expertise_contraceptives", "Contraceptives"],
-            ["expertise_hiv_stis", "HIV & STIs"],
-            ["expertise_gbv", "Gender-Based Violence"],
-            ["expertise_mental_health", "Mental Health"],
-            ["expertise_physical_health", "Physical Health"],
-            ["expertise_nutrition", "Nutrition"],
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              disabled={!editing}
-              onClick={() => toggleExpertise(key)}
-              className={`border rounded-xl px-3 py-2 text-sm ${
-                profile[key]
-                  ? "border-amber-400 bg-amber-50 text-amber-700"
-                  : "border-slate-200"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* Actions */}
@@ -299,10 +181,6 @@ export default function Profile() {
             </button>
           </>
         )}
-      </div>
-
-      <div className="mt-8 border border-dashed rounded-xl p-4 text-center text-sm text-slate-400">
-        Endorsements and ratings will appear here
       </div>
     </div>
   );
