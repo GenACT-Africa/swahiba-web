@@ -65,7 +65,7 @@ export default function App() {
 
           {/* Public Swahiba profile */}
           <Route path="/swahiba/profile" element={<SwahibaProfile />} />
-          <Route path="/swahiba/reset-password" element={<ResetPassword />} />
+          <Route path="/swahiba/resetpassword" element={<ResetPassword />} />
 
           {/* 🧑‍⚕️ SWAHIBA (PROTECTED) */}
           <Route
