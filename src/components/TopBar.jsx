@@ -19,6 +19,23 @@ export default function TopBar({ showTalkButton = true }) {
   const [me, setMe] = useState(null);
   const [profile, setProfile] = useState(null);
 
+  const [scrolled, setScrolled] = useState(false);
+
+  const handleScroll = () => {
+    if (window.scrollY > 10) {
+      setScrolled(true);
+    } else {
+      setScrolled(false);
+    }
+  };
+
+  useEffect(() => {
+    window.addEventListener("scroll", handleScroll);
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, []);
+
   /* =======================
      LOAD AUTH + PROFILE
   ======================= */
@@ -59,11 +76,7 @@ export default function TopBar({ showTalkButton = true }) {
   ======================= */
   useEffect(() => {
     function onClick(e) {
-      if (
-        userMenuOpen &&
-        userMenuRef.current &&
-        !userMenuRef.current.contains(e.target)
-      ) {
+      if (userMenuOpen && userMenuRef.current && !userMenuRef.current.contains(e.target)) {
         setUserMenuOpen(false);
       }
     }
@@ -76,8 +89,6 @@ export default function TopBar({ showTalkButton = true }) {
   ======================= */
   const labels = useMemo(() => {
     const SW = {
-      brand: "SWAHIBA",
-      tagline: "Msaidizi wako wa Afya",
       home: "Nyumbani",
       learn: "Jifunze",
       products: "Bidhaa",
@@ -89,8 +100,6 @@ export default function TopBar({ showTalkButton = true }) {
       signOut: "Ondoka",
     };
     const EN = {
-      brand: "SWAHIBA",
-      tagline: "Your Selfcare Companion",
       home: "Home",
       learn: "Learn",
       products: "Products",
@@ -115,24 +124,26 @@ export default function TopBar({ showTalkButton = true }) {
   const role = profile?.role || "user";
 
   return (
-    <header className="sticky top-0 z-50 border-b border-slate-200 bg-white">
+    <header
+      className={`sticky top-0 z-50 border-b border-slate-200 bg-[#f8eff2] transition-shadow duration-300 ${
+        scrolled ? "shadow-md" : ""
+      }`}
+    >
       <div className="mx-auto max-w-[1200px] px-4 py-3">
         <div className="flex items-center justify-between gap-4">
-
-          {/* BRAND */}
+          {/* BRAND (LOGO ONLY) */}
           <button
             onClick={() => navigate("/")}
-            className="flex items-center gap-3"
+            className="flex items-center"
+            aria-label="Swahiba Home"
+            title="Swahiba"
           >
-            <div className="h-10 w-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-bold">
-              S
-            </div>
-            <div>
-              <div className="text-sm font-bold">{labels.brand}</div>
-              <div className="text-xs text-slate-500">
-                {isStaffArea ? labels.dashboard : labels.tagline}
-              </div>
-            </div>
+            <img
+              src="/logo_transparent.png"
+              alt="Swahiba"
+              className="h-12 w-auto object-contain"
+              loading="eager"
+            />
           </button>
 
           {/* CENTER NAV (DESKTOP) */}
@@ -153,7 +164,6 @@ export default function TopBar({ showTalkButton = true }) {
 
           {/* RIGHT CONTROLS */}
           <div className="flex items-center gap-3">
-
             {/* 🌍 LANGUAGE TOGGLE */}
             <div className="flex overflow-hidden rounded-2xl border border-slate-200">
               <button

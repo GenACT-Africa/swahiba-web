@@ -17,6 +17,7 @@ import AboutUs from "./pages/AboutUs.jsx";
 
 // 👤 Swahiba public profile
 import SwahibaProfile from "./pages/swahiba/Profile.jsx";
+import ResetPassword from "./pages/swahiba/ResetPassword";
 
 // 🔐 Auth
 import Signup from "./pages/swahiba/Signup.jsx";
@@ -28,7 +29,9 @@ import CaseDetails from "./pages/swahiba/CaseDetails.jsx";
 import Inbox from "./pages/swahiba/Inbox.jsx";
 
 // 🛠 Admin
+import AdminLogin from "./pages/admin/AdminLogin";
 import AdminPanel from "./pages/admin/AdminPanel.jsx";
+import AdminResetPassword from "./pages/admin/AdminResetPassword";
 import ManageProducts from "./pages/admin/ManageProducts.jsx";
 import ManageResources from "./pages/admin/ManageResources.jsx";
 import ManageReferrals from "./pages/admin/ManageReferrals.jsx";
@@ -62,6 +65,7 @@ export default function App() {
 
           {/* Public Swahiba profile */}
           <Route path="/swahiba/profile" element={<SwahibaProfile />} />
+          <Route path="/swahiba/reset-password" element={<ResetPassword />} />
 
           {/* 🧑‍⚕️ SWAHIBA (PROTECTED) */}
           <Route
@@ -90,6 +94,8 @@ export default function App() {
           />
 
           {/* 🛠 ADMIN (ADMIN ONLY) */}
+          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/admin/reset-password" element={<AdminResetPassword />} />
           <Route
             path="/admin"
             element={

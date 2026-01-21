@@ -17,9 +17,11 @@ export default function Footer() {
       setUser(data?.session?.user ?? null);
     });
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null);
+      }
+    );
 
     return () => {
       authListener.subscription.unsubscribe();
@@ -31,7 +33,7 @@ export default function Footer() {
       ? {
           brandDesc:
             "Rafiki wa kuaminika kwa maswali na msaada wa afya yako ya mwili na akili kwa siri, kwa heshima, na kwa usalama.",
-          notEmergency: "Swahiba si huduma ya dharura.",
+          notEmergency: "Kanusho: Swahiba si huduma ya dharura. Ikiwa uko hatarini mara moja au unahitaji msaada wa haraka wa kitabibu, piga simu ya dharura ya eneo lako au namba ya msaada unayoamini sasa hivi. Swahiba pia si AI. Utasaidiwa na kijana rika aliyehitimu na kufunzwa kutoka GenACT Africa anayesikiliza, anakupa mwongozo, na anakusaidia kuunganishwa na huduma sahihi.",
           support: "Msaada",
           talk: "Ongea na SWAHIBA",
           triage: "Tathmini ya haraka",
@@ -50,7 +52,7 @@ export default function Footer() {
       : {
           brandDesc:
             "A trusted companion for your physical and mental health questions and support private, respectful, and safe.",
-          notEmergency: "Swahiba is not an emergency service.",
+          notEmergency: "Disclaimer: Swahiba is not an emergency service. If you are in immediate danger or need urgent medical help, call local emergency services or a trusted hotline right now. Swahiba is also not AI. You will be supported by a real, trained peer from GenACT Africa who listens, offers guidance, and helps connect you to appropriate services.",
           support: "Support",
           talk: "Talk to SWAHIBA",
           triage: "Quick check",
@@ -87,11 +89,10 @@ export default function Footer() {
 
     for (const c of candidates) {
       try {
-        const { data, error } = await supabase
-          .from(c.table)
-          .select(c.cols)
-          .eq("id", u.id)
-          .maybeSingle?.() ?? supabase.from(c.table).select(c.cols).eq("id", u.id).single();
+        const query = supabase.from(c.table).select(c.cols).eq("id", u.id);
+        const { data, error } = query.maybeSingle
+          ? await query.maybeSingle()
+          : await query.single();
 
         if (!error && data) {
           const role = String(data.role || "").toLowerCase();
@@ -141,7 +142,6 @@ export default function Footer() {
   }, [user?.id]);
 
   const managePath = useMemo(() => {
-    // default safe path for any non-admin
     return isAdmin ? "/admin" : "/swahiba/cases";
   }, [isAdmin]);
 
@@ -155,32 +155,47 @@ export default function Footer() {
   }
 
   return (
-    <footer className="border-t border-slate-200 bg-white">
+    <footer className="border-t border-slate-200 bg-[#f8eff2]">
       <div className="mx-auto max-w-[1200px] px-6 py-14">
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
           {/* Brand */}
           <div>
-            <div className="text-lg font-extrabold text-slate-900">SWAHIBA</div>
-            <p className="mt-3 text-sm leading-6 text-slate-600">{t.brandDesc}</p>
+            <div className="text-lg font-extrabold text-slate-900">
+              SWAHIBA
+            </div>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              {t.brandDesc}
+            </p>
             <p className="mt-3 text-xs text-slate-500">{t.notEmergency}</p>
           </div>
 
           {/* Support */}
           <div>
-            <div className="text-sm font-bold uppercase tracking-wide text-slate-900">{t.support}</div>
+            <div className="text-sm font-bold uppercase tracking-wide text-slate-900">
+              {t.support}
+            </div>
             <ul className="mt-4 space-y-3 text-sm">
               <li>
-                <Link to="/talk" className="font-semibold text-amber-600 hover:text-amber-700">
+                <Link
+                  to="/talk"
+                  className="font-semibold text-amber-600 hover:text-amber-700"
+                >
                   {t.talk} →
                 </Link>
               </li>
               <li>
-                <Link to="/triage" className="text-slate-700 hover:text-slate-900">
+                <Link
+                  to="/triage"
+                  className="text-slate-700 hover:text-slate-900"
+                >
                   {t.triage}
                 </Link>
               </li>
               <li>
-                <Link to="/resources" className="text-slate-700 hover:text-slate-900">
+                <Link
+                  to="/resources"
+                  className="text-slate-700 hover:text-slate-900"
+                >
                   {t.resources}
                 </Link>
               </li>
@@ -189,20 +204,31 @@ export default function Footer() {
 
           {/* Safety */}
           <div>
-            <div className="text-sm font-bold uppercase tracking-wide text-slate-900">{t.safety}</div>
+            <div className="text-sm font-bold uppercase tracking-wide text-slate-900">
+              {t.safety}
+            </div>
             <ul className="mt-4 space-y-3 text-sm">
               <li>
-                <Link to="/safeguarding" className="text-slate-700 hover:text-slate-900">
+                <Link
+                  to="/safeguarding"
+                  className="text-slate-700 hover:text-slate-900"
+                >
                   {t.safeguarding}
                 </Link>
               </li>
               <li>
-                <Link to="/emergency-contacts" className="text-slate-700 hover:text-slate-900">
+                <Link
+                  to="/emergency-contacts"
+                  className="text-slate-700 hover:text-slate-900"
+                >
                   {t.emergency}
                 </Link>
               </li>
               <li>
-                <Link to="/data-use" className="text-slate-700 hover:text-slate-900">
+                <Link
+                  to="/data-use"
+                  className="text-slate-700 hover:text-slate-900"
+                >
                   {t.data}
                 </Link>
               </li>
@@ -211,19 +237,22 @@ export default function Footer() {
 
           {/* Contact + Login / Logout + Manage */}
           <div>
-            <div className="text-sm font-bold uppercase tracking-wide text-slate-900">{t.contact}</div>
+            <div className="text-sm font-bold uppercase tracking-wide text-slate-900">
+              {t.contact}
+            </div>
             <ul className="mt-4 space-y-3 text-sm text-slate-700">
               <li>swahiba.org</li>
               <li>
-                WhatsApp: <span className="font-semibold">+255780327697</span>
+                WhatsApp:{" "}
+                <span className="font-semibold">+255780327697</span>
               </li>
             </ul>
 
-            <div className="mt-4">
+            <div className="mt-4 space-y-2">
               {!user ? (
                 <Link
                   to="/swahiba/login"
-                  className="text-xs font-semibold text-slate-500 hover:text-slate-800 underline underline-offset-4"
+                  className="block text-xs font-semibold text-slate-500 hover:text-slate-800 underline underline-offset-4"
                 >
                   {t.login}
                 </Link>
@@ -231,22 +260,19 @@ export default function Footer() {
                 <>
                   <button
                     onClick={handleLogout}
-                    className="text-xs font-semibold text-slate-500 hover:text-slate-800 underline underline-offset-4"
+                    className="block text-xs font-semibold text-slate-500 hover:text-slate-800 underline underline-offset-4"
                   >
                     {t.logout}
                   </button>
 
-                  {/* ✅ Manage (below logout, same style) */}
-                  <div className="mt-2">
-                    <button
-                      onClick={handleManage}
-                      disabled={!roleChecked} // optional: avoids wrong click before role resolves
-                      className="text-xs font-semibold text-slate-500 hover:text-slate-800 underline underline-offset-4 disabled:opacity-50 disabled:cursor-not-allowed"
-                      title={!roleChecked ? "Loading…" : ""}
-                    >
-                      {t.manage}
-                    </button>
-                  </div>
+                  <button
+                    onClick={handleManage}
+                    disabled={!roleChecked}
+                    className="block text-xs font-semibold text-slate-500 hover:text-slate-800 underline underline-offset-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={!roleChecked ? "Loading…" : ""}
+                  >
+                    {t.manage}
+                  </button>
                 </>
               )}
             </div>
