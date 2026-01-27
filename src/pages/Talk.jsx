@@ -809,14 +809,16 @@ export default function Talk() {
               onChange={(e) => setAccessCodeInput(e.target.value)}
               className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
             />
-            <button
-              onClick={submitRequest}
-              disabled={requestSent || onboardLoading || accessCodeInput.length < 4}
-              className="mt-2 rounded-2xl bg-amber-500 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:bg-slate-300"
-              type="button"
-            >
-              {t.saveAccessCode}
-            </button>
+            {!accessCodeSet ? (
+              <button
+                onClick={submitRequest}
+                disabled={requestSent || onboardLoading || accessCodeInput.length < 4}
+                className="mt-2 rounded-2xl bg-amber-500 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:bg-slate-300"
+                type="button"
+              >
+                {t.saveAccessCode}
+              </button>
+            ) : null}
           </div>
 
           {accessCodeSet && !requestSent ? (
