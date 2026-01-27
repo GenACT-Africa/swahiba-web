@@ -17,6 +17,7 @@ export default function TopBar({ showTalkButton = true }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [isCompactHeight, setIsCompactHeight] = useState(false);
 
   const userMenuRef = useRef(null);
   const notifRef = useRef(null);
@@ -39,6 +40,13 @@ export default function TopBar({ showTalkButton = true }) {
   useEffect(() => {
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => setIsCompactHeight(window.innerHeight <= 700);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   const computeUnread = useCallback((list) => {
@@ -249,6 +257,12 @@ export default function TopBar({ showTalkButton = true }) {
 
   const profileName = profile?.full_name || me?.email || "Account";
   const role = profile?.role || "user";
+  const mainLinks = [
+    { to: "/", label: labels.home },
+    { to: "/resources", label: labels.learn },
+    { to: "/marketplace", label: labels.products },
+    { to: "/about", label: labels.about },
+  ];
 
   return (
     <header
@@ -275,48 +289,44 @@ export default function TopBar({ showTalkButton = true }) {
 
           {/* CENTER NAV (DESKTOP) */}
           <nav className="hidden md:flex gap-8">
-            <NavLink to="/" className="text-sm font-semibold">
-              {labels.home}
-            </NavLink>
-            <NavLink to="/resources" className="text-sm font-semibold">
-              {labels.learn}
-            </NavLink>
-            <NavLink to="/marketplace" className="text-sm font-semibold">
-              {labels.products}
-            </NavLink>
-            <NavLink to="/about" className="text-sm font-semibold">
-              {labels.about}
-            </NavLink>
+            {mainLinks.map((link) => (
+              <NavLink key={link.to} to={link.to} className="text-sm font-semibold">
+                {link.label}
+              </NavLink>
+            ))}
           </nav>
 
           {/* RIGHT CONTROLS */}
           <div className="flex items-center gap-3">
             {/* 🌍 LANGUAGE TOGGLE */}
-            <div className="flex overflow-hidden rounded-2xl border border-slate-200">
-              <button
-                onClick={() => setLang("SW")}
-                className={`px-3 py-2 text-xs font-bold ${
-                  lang === "SW"
-                    ? "bg-slate-900 text-white"
-                    : "text-slate-700 hover:bg-slate-50"
-                }`}
-              >
-                SW
-              </button>
-              <button
-                onClick={() => setLang("EN")}
-                className={`px-3 py-2 text-xs font-bold ${
-                  lang === "EN"
-                    ? "bg-slate-900 text-white"
-                    : "text-slate-700 hover:bg-slate-50"
-                }`}
-              >
-                EN
-              </button>
-            </div>
+            {!isCompactHeight && (
+              <div className="flex overflow-hidden rounded-2xl border border-slate-200">
+                <button
+                  onClick={() => setLang("SW")}
+                  className={`px-3 py-2 text-xs font-bold ${
+                    lang === "SW"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  SW
+                </button>
+                <button
+                  onClick={() => setLang("EN")}
+                  className={`px-3 py-2 text-xs font-bold ${
+                    lang === "EN"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  EN
+                </button>
+              </div>
+            )}
 
             {/* PUBLIC OR STAFF */}
             {!isStaffArea ? (
+              !isCompactHeight &&
               showTalkButton && (
                 <button
                   onClick={() => navigate("/talk")}
@@ -480,9 +490,137 @@ export default function TopBar({ showTalkButton = true }) {
                 </div>
               </>
             )}
+
+            {isCompactHeight && (
+              <button
+                type="button"
+                onClick={() => setMobileOpen(true)}
+                className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                aria-label="Open menu"
+              >
+                ☰
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {isCompactHeight && mobileOpen && (
+        <div className="fixed inset-0 z-[60]">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/30"
+            onClick={() => setMobileOpen(false)}
+            aria-label="Close menu"
+          />
+          <div className="absolute right-0 top-0 h-full w-72 bg-white shadow-xl border-l border-slate-200 p-4 flex flex-col">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-bold">{labels.talk}</div>
+              <button
+                type="button"
+                className="rounded-xl border border-slate-200 px-3 py-1 text-xs font-semibold"
+                onClick={() => setMobileOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              {mainLinks.map((link) => (
+                <NavLink
+                  key={link.to}
+                  to={link.to}
+                  onClick={() => setMobileOpen(false)}
+                  className="block rounded-xl px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                >
+                  {link.label}
+                </NavLink>
+              ))}
+
+              {!isStaffArea && showTalkButton && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    navigate("/talk");
+                  }}
+                  className="w-full rounded-xl bg-amber-500 px-3 py-2 text-sm font-semibold text-white"
+                >
+                  {labels.talk}
+                </button>
+              )}
+            </div>
+
+            {isStaffArea && (
+              <div className="mt-4 space-y-2 border-t border-slate-200 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    navigate("/swahiba/cases");
+                  }}
+                  className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-slate-50"
+                >
+                  {labels.dashboard}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    navigate("/swahiba/inbox");
+                  }}
+                  className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-slate-50"
+                >
+                  {labels.inbox}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    navigate("/swahiba/profile");
+                  }}
+                  className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold hover:bg-slate-50"
+                >
+                  {labels.profile}
+                </button>
+                <button
+                  type="button"
+                  onClick={signOut}
+                  className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-red-600 hover:bg-red-50"
+                >
+                  {labels.signOut}
+                </button>
+              </div>
+            )}
+
+            <div className="mt-auto border-t border-slate-200 pt-4">
+              <div className="text-xs font-semibold text-slate-500 mb-2">Language</div>
+              <div className="flex overflow-hidden rounded-2xl border border-slate-200">
+                <button
+                  onClick={() => setLang("SW")}
+                  className={`flex-1 px-3 py-2 text-xs font-bold ${
+                    lang === "SW"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  SW
+                </button>
+                <button
+                  onClick={() => setLang("EN")}
+                  className={`flex-1 px-3 py-2 text-xs font-bold ${
+                    lang === "EN"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  EN
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 }
