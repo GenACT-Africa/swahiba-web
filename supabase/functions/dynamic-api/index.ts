@@ -18,10 +18,17 @@ const corsHeaders = {
 type SwahibaProfile = {
   id: string;
   full_name: string;
-  phone_number: string | null;
   district: string | null;
   region: string | null;
+  avatar_url: string | null;
+  bio: string | null;
   availability: string;
+  expertise_contraceptives: boolean | null;
+  expertise_hiv_stis: boolean | null;
+  expertise_gbv: boolean | null;
+  expertise_mental_health: boolean | null;
+  expertise_physical_health: boolean | null;
+  expertise_nutrition: boolean | null;
 };
 
 serve(async (req) => {
@@ -51,13 +58,23 @@ serve(async (req) => {
         `
         id,
         full_name,
-        phone_number,
         district,
         region,
-        availability
+        avatar_url,
+        bio,
+        availability,
+        last_seen_at,
+        expertise_contraceptives,
+        expertise_hiv_stis,
+        expertise_gbv,
+        expertise_mental_health,
+        expertise_physical_health,
+        expertise_nutrition
       `
       )
+      .eq("role", "swahiba")
       .eq("availability", "available")
+      .order("last_seen_at", { ascending: false })
       .limit(1)
       .maybeSingle<SwahibaProfile>();
 
@@ -81,13 +98,59 @@ serve(async (req) => {
     // No Swahiba available
     // ─────────────────────────────────────────────
     if (!data) {
-      return new Response(
-        JSON.stringify({ error: "No Swahiba available" }),
-        {
-          status: 404,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+      const { data: fallback, error: fallbackErr } = await supabase
+        .from("profiles")
+        .select(
+          `
+          id,
+          full_name,
+          district,
+          region,
+          avatar_url,
+          bio,
+          availability,
+          last_seen_at,
+          expertise_contraceptives,
+          expertise_hiv_stis,
+          expertise_gbv,
+          expertise_mental_health,
+          expertise_physical_health,
+          expertise_nutrition
+        `
+        )
+        .eq("role", "swahiba")
+        .neq("availability", "available")
+        .order("last_seen_at", { ascending: true })
+        .limit(1)
+        .maybeSingle<SwahibaProfile>();
+
+      if (fallbackErr) {
+        return new Response(
+          JSON.stringify({
+            error: "Database error",
+            details: fallbackErr.message,
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      if (!fallback) {
+        return new Response(
+          JSON.stringify({ error: "No Swahiba available" }),
+          {
+            status: 404,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      return new Response(JSON.stringify(fallback), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // ─────────────────────────────────────────────

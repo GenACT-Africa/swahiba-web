@@ -157,7 +157,7 @@ export default function Login() {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md bg-white rounded-3xl p-8 border">
         <h1 className="text-3xl font-semibold text-center">Swahiba Login</h1>
-        <p className="text-sm text-center text-slate-600 mt-2">Log in to your profile.</p>
+        <p className="text-sm text-center text-slate-600 mt-2">.</p>
 
         {error && (
           <div className="mt-4 bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-xl">
@@ -170,29 +170,6 @@ export default function Login() {
             Reset link sent. Check your email.
           </div>
         )}
-
-        {/* Google login */}
-        <div className="mt-6">
-          <button
-            type="button"
-            onClick={handleGoogleLogin}
-            disabled={oauthLoading || loading || resetLoading}
-            className={`w-full inline-flex items-center justify-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
-              oauthLoading || loading || resetLoading
-                ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-                : "bg-white hover:bg-slate-50 text-slate-900"
-            }`}
-          >
-            <GoogleIcon />
-            {oauthLoading ? "…" : "Continue with Google"}
-          </button>
-
-          <div className="my-6 flex items-center gap-3">
-            <div className="h-px w-full bg-slate-200" />
-            <div className="text-xs text-slate-400 font-semibold">OR</div>
-            <div className="h-px w-full bg-slate-200" />
-          </div>
-        </div>
 
         {/* Email/password login */}
         <form onSubmit={handleLogin} className="space-y-4">
@@ -284,8 +261,8 @@ export default function Login() {
 
         <p className="text-center text-sm mt-6">
           No account yet?{" "}
-          <Link to="/swahiba/signup" className="text-amber-600 font-semibold">
-            Create one
+          <Link className="text-amber-600 font-semibold">
+            Contact Admin
           </Link>
         </p>
       </div>

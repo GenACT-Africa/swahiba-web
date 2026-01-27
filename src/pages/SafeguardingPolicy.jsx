@@ -10,7 +10,7 @@ const i18n = {
     backHome: "← Rudi",
     title: "Sera ya ulinzi",
     intro:
-      "Maudhui ya muda (MVP). Badilisha hapa na mwongozo wako wa mwisho wa ulinzi na usalama.",
+      "Mwongozo wa ulinzi na usalama.",
     confidentialityTitle: "Faragha:",
     confidentialityBody: "Tunahifadhi mazungumzo kwa siri.",
     limitsTitle: "Mipaka:",
@@ -24,7 +24,7 @@ const i18n = {
     backHome: "← Back",
     title: "Safeguarding policy",
     intro:
-      "MVP placeholder content. Replace with your final safeguarding guidance.",
+      "Safeguarding guidance.",
     confidentialityTitle: "Confidentiality:",
     confidentialityBody: "We keep conversations private.",
     limitsTitle: "Limits:",

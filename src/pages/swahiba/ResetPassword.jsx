@@ -7,6 +7,7 @@ export default function ResetPassword() {
 
   const [checking, setChecking] = useState(true);
   const [authedForRecovery, setAuthedForRecovery] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState("");
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -26,8 +27,10 @@ export default function ResetPassword() {
 
         if (data?.session) {
           setAuthedForRecovery(true);
+          setRecoveryEmail(data.session.user?.email || "");
         } else {
           setAuthedForRecovery(false);
+          setRecoveryEmail("");
         }
       } finally {
         if (alive) setChecking(false);
@@ -81,6 +84,11 @@ export default function ResetPassword() {
         <p className="text-sm text-center text-slate-600 mt-2">
           Choose a new password to continue.
         </p>
+        {recoveryEmail && (
+          <div className="mt-3 text-center text-xs text-slate-500">
+            Resetting password for <span className="font-semibold text-slate-700">{recoveryEmail}</span>
+          </div>
+        )}
 
         {error && (
           <div className="mt-4 bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-xl">

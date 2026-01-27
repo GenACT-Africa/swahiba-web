@@ -35,7 +35,6 @@ const PACKS = {
       "Female Condom",
       "Contraceptive Pills",
       "Emergency Pills",
-      "Pregnancy Test",
       "Sanitary Pads",
       "Wipes",
     ],
@@ -127,6 +126,7 @@ const i18n = {
     orderSummary: "Muhtasari wa oda",
 
     optionalAddBag: "Ongeza Crunch Bag",
+    bagMissingWarning: "Hujachagua bag. Endelea bila bag?",
     included: "Imejumuishwa",
     free: "BURE",
     priceLabel: "TZS",
@@ -145,6 +145,13 @@ const i18n = {
     freeAddon: "Nyongeza bure",
     remove: "Ondoa",
     addNewItems: "Ongeza bidhaa mpya",
+
+    // ✅ Product details
+    ratingLabel: "Uhakiki",
+    reviewsLabel: "Maoni",
+    regionLabel: "Mkoa",
+    producerLabel: "Kikundi cha wazalishaji",
+    noData: "—",
   },
   en: {
     title: "Products",
@@ -200,6 +207,7 @@ const i18n = {
     orderSummary: "Order summary",
 
     optionalAddBag: "Add Crunch Bag",
+    bagMissingWarning: "No bag selected. Continue without a bag?",
     included: "Included",
     free: "FREE",
     priceLabel: "TZS",
@@ -218,6 +226,13 @@ const i18n = {
     freeAddon: "Free add-on",
     remove: "Remove",
     addNewItems: "Add new items",
+
+    // ✅ Product details
+    ratingLabel: "Rating",
+    reviewsLabel: "Reviews",
+    regionLabel: "Region",
+    producerLabel: "Producer group",
+    noData: "—",
   },
 };
 
@@ -254,6 +269,12 @@ function normalizeProduct(row, resolvedImage) {
     priceTzs: Number(row.price_tzs ?? 0),
     image: resolvedImage || "",
     whatsappNumber: row.whatsapp_order_number || null,
+
+    // ✅ extra details for modal
+    avgRating: row.avg_rating ?? null,
+    reviewsCount: row.reviews_count ?? null,
+    region: row.region ?? null,
+    producerGroup: row.producer_group ?? null,
   };
 }
 
@@ -261,7 +282,7 @@ async function fetchProducts() {
   const { data, error } = await supabase
     .from("products")
     .select(
-      "id, product_name, description, price_tzs, image_url, image_path, whatsapp_order_number, is_active, sort_order"
+      "id, product_name, description, price_tzs, image_url, image_path, whatsapp_order_number, is_active, sort_order, avg_rating, reviews_count, region, producer_group"
     )
     .eq("is_active", true)
     .order("sort_order", { ascending: true });
@@ -280,6 +301,13 @@ async function fetchProducts() {
  * =========================
  */
 async function loadPackByNumber(packNo) {
+  const { data: fnData, error: fnErr } = await supabase.functions.invoke("pack-refill", {
+    body: { pack_no: packNo },
+  });
+  if (!fnErr && fnData?.pack) {
+    return fnData;
+  }
+
   const { data: claim, error: claimErr } = await supabase.rpc("claim_pack_by_no", {
     p_pack_no: packNo,
   });
@@ -391,13 +419,19 @@ export default function Marketplace() {
   const [refillLoading, setRefillLoading] = useState(false);
 
   // ✅ Pack Manager modal state
-  const [pmOpen, setPmOpen] = useState(false);
   const [pmPack, setPmPack] = useState(null); // { pack, items }
   const [pmItems, setPmItems] = useState([]); // editable: [{ productId, qty, isFree }]
   const [pmSearch, setPmSearch] = useState("");
   const [pmErr, setPmErr] = useState("");
   const [pmSaving, setPmSaving] = useState(false);
   const [pmSaved, setPmSaved] = useState("");
+
+  // Available packs for purchase
+  const [availablePacks, setAvailablePacks] = useState([]);
+  const [availablePackItems, setAvailablePackItems] = useState({});
+  const [availablePackError, setAvailablePackError] = useState("");
+  const [availablePackLoading, setAvailablePackLoading] = useState(false);
+  const [availablePackOpen, setAvailablePackOpen] = useState(null);
 
   // Builder
   const [builderOpen, setBuilderOpen] = useState(false);
@@ -407,6 +441,7 @@ export default function Marketplace() {
   const [builderStep, setBuilderStep] = useState(1);
   const [builderMain, setBuilderMain] = useState({});
   const [builderAddons, setBuilderAddons] = useState({});
+  const [builderProductsMap, setBuilderProductsMap] = useState({});
   const [builderAddBag, setBuilderAddBag] = useState(false);
   const [builderSearch, setBuilderSearch] = useState("");
 
@@ -431,26 +466,54 @@ export default function Marketplace() {
         priceTzs: 0,
         image: "",
         whatsappNumber: null,
+        avgRating: null,
+        reviewsCount: null,
+        region: null,
+        producerGroup: null,
       }
     );
   }, [byName]);
 
   const addonIds = useMemo(() => {
     const ids = new Set();
-    for (const n of ADDON_NAMES) {
-      const p = byName.get(String(n).toLowerCase().trim());
-      if (p) ids.add(p.id);
+    for (const p of products) {
+      const isFree = Number(p.priceTzs || 0) === 0;
+      const isBag = String(p.name || "").toLowerCase() === CRUNCH_BAG_NAME.toLowerCase();
+      if (isFree && !isBag) ids.add(p.id);
     }
     return ids;
-  }, [byName]);
+  }, [products]);
+
+  const bagProductIds = useMemo(() => {
+    const ids = new Set();
+    for (const p of products) {
+      const name = String(p.name || "").toLowerCase();
+      if (name.includes("bag")) ids.add(p.id);
+    }
+    return ids;
+  }, [products]);
 
   const mainCandidates = useMemo(() => {
     const q = builderSearch.trim().toLowerCase();
     return products
       .filter((p) => {
-        const isBag = String(p.name).toLowerCase() === CRUNCH_BAG_NAME.toLowerCase();
         const isAddon = addonIds.has(p.id);
-        if (isBag || isAddon) return false;
+        if (isAddon) return false;
+        if (builderPackCode === "female_pack") {
+          const name = String(p.name || "").toLowerCase().trim();
+          if (name === "pregnancy test") return false;
+        }
+        if (!q) return true;
+        return String(p.name).toLowerCase().includes(q);
+      })
+      .slice(0, 30);
+  }, [products, builderSearch, addonIds, builderPackCode]);
+
+  const addonCandidates = useMemo(() => {
+    const q = builderSearch.trim().toLowerCase();
+    return products
+      .filter((p) => {
+        if (!addonIds.has(p.id)) return false;
         if (!q) return true;
         return String(p.name).toLowerCase().includes(q);
       })
@@ -502,7 +565,7 @@ export default function Marketplace() {
   useEffect(() => {
     const onKeyDown = (e) =>
       e.key === "Escape" &&
-      (setActiveProduct(null), setCartOpen(false), setBuilderOpen(false), setPmOpen(false));
+      (setActiveProduct(null), setCartOpen(false), setBuilderOpen(false));
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
@@ -563,9 +626,11 @@ export default function Marketplace() {
     setBuilderStep(1);
     setBuilderMain(nextMain);
     setBuilderAddons({});
+    setBuilderProductsMap({});
     setBuilderAddBag(false);
     setBuilderSearch("");
     setBuilderOpen(true);
+    loadAvailablePacks(packCode);
   }
 
   function openPackBuilderFromPackItems(packType, packNoValue, items) {
@@ -574,10 +639,19 @@ export default function Marketplace() {
 
     const nextMain = {};
     const nextAddons = {};
+    const nextMap = {};
 
     for (const it of items) {
       const product = it.product;
       if (!product?.id) continue;
+      nextMap[String(product.id)] = {
+        id: product.id,
+        name: product.product_name || "—",
+        desc: product.description || "",
+        priceTzs: Number(product.price_tzs || 0),
+        image: product.image_url || product.image || "",
+        whatsappNumber: product.whatsapp_order_number || null,
+      };
       const pid = product.id;
       const qty = Number(it.qty || 1);
 
@@ -585,8 +659,7 @@ export default function Marketplace() {
       const isBag = name === CRUNCH_BAG_NAME.toLowerCase();
       if (isBag) continue;
 
-      const isAddon = ADDON_NAMES.map((x) => x.toLowerCase()).includes(name);
-      if (isAddon || it.is_free) {
+      if (it.is_free) {
         nextAddons[pid] = true;
       } else {
         nextMain[pid] = qty;
@@ -599,9 +672,78 @@ export default function Marketplace() {
     setBuilderStep(1);
     setBuilderMain(nextMain);
     setBuilderAddons(nextAddons);
+    setBuilderProductsMap(nextMap);
     setBuilderAddBag(false);
     setBuilderSearch("");
     setBuilderOpen(true);
+  }
+
+  async function loadAvailablePacks(packType) {
+    if (!packType) return;
+    setAvailablePackError("");
+    setAvailablePackLoading(true);
+    try {
+      let list = [];
+      let items = [];
+
+      const { data: fnData, error: fnErr } = await supabase.functions.invoke("available-packs", {
+        body: { pack_type: packType },
+      });
+
+      if (!fnErr && fnData?.packs) {
+        list = fnData.packs || [];
+        items = fnData.items || [];
+      } else {
+        const { data: packs, error: packsErr } = await supabase
+          .from("packs")
+          .select("id, pack_no, pack_type, user_id, is_active, created_at")
+          .eq("pack_type", packType)
+          .eq("is_active", true)
+          .is("user_id", null)
+          .order("created_at", { ascending: true });
+        if (packsErr) throw packsErr;
+        list = packs || [];
+
+        if (list.length) {
+          const ids = list.map((p) => p.id);
+          const { data: packItems, error: itemsErr } = await supabase
+            .from("pack_items")
+            .select("id, pack_id, product_id, qty, is_free, products:products(id, product_name, price_tzs, image_url, image_path)")
+            .in("pack_id", ids);
+          if (itemsErr) throw itemsErr;
+          items = packItems || [];
+        }
+      }
+
+      setAvailablePacks(list);
+
+      if (!list.length) {
+        setAvailablePackItems({});
+        setAvailablePackOpen(null);
+        return;
+      }
+      const grouped = {};
+      for (const it of items || []) {
+        const product = it.products || {};
+        const image = await resolveProductImage({
+          image_path: product.image_path,
+          image_url: product.image_url,
+        });
+        const merged = {
+          ...it,
+          products: { ...product, image },
+        };
+        if (!grouped[it.pack_id]) grouped[it.pack_id] = [];
+        grouped[it.pack_id].push(merged);
+      }
+      setAvailablePackItems(grouped);
+    } catch (e) {
+      setAvailablePackError(e?.message || String(e));
+      setAvailablePacks([]);
+      setAvailablePackItems({});
+    } finally {
+      setAvailablePackLoading(false);
+    }
   }
 
   function addProductToCart(p, qty = 1, isFree = false, meta = {}) {
@@ -623,6 +765,7 @@ export default function Marketplace() {
         packLabel: meta.packLabel || null,
         flowType: meta.flowType || null,
         packNo: meta.packNo || null,
+        packId: meta.packId || null,
       });
     });
   }
@@ -630,7 +773,8 @@ export default function Marketplace() {
   function builderMainItemsResolved() {
     const items = [];
     for (const [pid, qty] of Object.entries(builderMain)) {
-      const p = products.find((x) => String(x.id) === String(pid));
+      const p =
+        builderProductsMap[String(pid)] || products.find((x) => String(x.id) === String(pid));
       if (p) items.push({ p, qty: Number(qty || 1) });
     }
     items.sort((a, b) => a.p.name.localeCompare(b.p.name));
@@ -640,7 +784,8 @@ export default function Marketplace() {
   function builderAddonItemsResolved() {
     const items = [];
     for (const pid of Object.keys(builderAddons)) {
-      const p = products.find((x) => String(x.id) === String(pid));
+      const p =
+        builderProductsMap[String(pid)] || products.find((x) => String(x.id) === String(pid));
       if (p) items.push(p);
     }
     items.sort((a, b) => a.name.localeCompare(b.name));
@@ -660,6 +805,14 @@ export default function Marketplace() {
     const flowType = builderMode === "PACK_REFILL" ? "PACK_REFILL" : "PACK_PURCHASE";
     const packLabel = builderPackLabel();
 
+    const hasBagSelected =
+      Object.keys(builderMain).some((pid) => bagProductIds.has(String(pid))) ||
+      Object.keys(builderAddons).some((pid) => bagProductIds.has(String(pid)));
+    if (builderMode === "PACK_PURCHASE" && !hasBagSelected) {
+      const proceed = window.confirm(t.bagMissingWarning);
+      if (!proceed) return;
+    }
+
     // Main items (paid)
     for (const [pid, qty] of Object.entries(builderMain)) {
       const p = products.find((x) => String(x.id) === String(pid));
@@ -678,23 +831,6 @@ export default function Marketplace() {
       if (!p) continue;
       addProductToCart(p, 1, true, {
         source: "PACK_ADDON_FREE",
-        packLabel,
-        flowType,
-        packNo: builderPackNo || null,
-      });
-    }
-
-    // Bag logic
-    if (builderMode === "PACK_PURCHASE" && pack.includesBag) {
-      addProductToCart(crunchBag, 1, true, {
-        source: "BAG_INCLUDED",
-        packLabel,
-        flowType,
-        packNo: null,
-      });
-    } else if (builderMode === "PACK_REFILL" && builderAddBag) {
-      addProductToCart(crunchBag, 1, false, {
-        source: "BAG_OPTIONAL",
         packLabel,
         flowType,
         packNo: builderPackNo || null,
@@ -761,6 +897,25 @@ export default function Marketplace() {
     });
 
     window.open(waLink(msg, WHATSAPP_NUMBER), "_blank", "noreferrer");
+
+    const availablePackIds = Array.from(
+      new Set(
+        cart.items
+          .filter((it) => it.flowType === "PACK_PURCHASE" && it.packId)
+          .map((it) => it.packId)
+      )
+    );
+    if (availablePackIds.length) {
+      supabase.auth.getUser().then(({ data: auth }) => {
+        const userId = auth?.user?.id || null;
+        availablePackIds.forEach(async (packId) => {
+          const payload = userId
+            ? { user_id: userId, buyer_phone: phone, is_active: false, updated_at: new Date().toISOString() }
+            : { buyer_phone: phone, is_active: false, updated_at: new Date().toISOString() };
+          await supabase.from("packs").update(payload).eq("id", packId);
+        });
+      });
+    }
   }
 
   /** =========================
@@ -847,7 +1002,6 @@ export default function Marketplace() {
       };
     });
 
-    setPmOpen(false);
     openPackBuilderFromPackItems(pmPack.pack.pack_type, pmPack.pack.pack_no, items);
   }
 
@@ -881,9 +1035,17 @@ export default function Marketplace() {
         return;
       }
 
-      setPmPack(result);
+      const items = result.items || [];
+      for (const it of items) {
+        if (!it.product) continue;
+        const img = await resolveProductImage({
+          image_path: it.product.image_path,
+          image_url: it.product.image_url,
+        });
+        it.product.image_url = img || it.product.image_url;
+      }
 
-      const rows = (result.items || [])
+      const rows = items
         .filter((it) => it?.product?.id)
         .filter(
           (it) =>
@@ -897,7 +1059,7 @@ export default function Marketplace() {
 
       setPmItems(rows);
       setPmSearch("");
-      setPmOpen(true);
+      openPackBuilderFromPackItems(result.pack.pack_type, result.pack.pack_no, items);
     } catch (e) {
       setRefillErr(e?.message || t.packNotFound);
     } finally {
@@ -1050,169 +1212,7 @@ export default function Marketplace() {
       </main>
 
       {/* ✅ Pack Manager Modal */}
-      {pmOpen && (
-        <Modal onClose={() => setPmOpen(false)}>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-lg font-extrabold">
-                {t.packManagerTitle} • {pmPackLabel}
-              </div>
-              <div className="mt-1 text-sm text-slate-600">
-                <span className="font-semibold text-slate-800">Pack No:</span> {pmPack?.pack?.pack_no || "—"}
-              </div>
-              <div className="mt-1 text-xs text-slate-500">{t.packManagerSubtitle}</div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setPmOpen(false)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold hover:bg-slate-50"
-            >
-              {t.close}
-            </button>
-          </div>
-
-          {pmErr && (
-            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{pmErr}</div>
-          )}
-          {pmSaved && (
-            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{pmSaved}</div>
-          )}
-
-          {/* Current items */}
-          <div className="mt-6">
-            <div className="text-sm font-semibold text-slate-900">{t.selectedItems}</div>
-            <div className="mt-3 space-y-3">
-              {pmResolvedRows.length ? (
-                pmResolvedRows.map((row) => (
-                  <div key={row.productId} className="rounded-2xl border border-slate-200 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <Thumb image={row.product?.image || ""} />
-                        <div>
-                          <div className="text-sm font-extrabold">{row.product?.name || "—"}</div>
-                          <div className="mt-1 text-xs text-slate-600">
-                            {row.isFree ? (
-                              <span className="font-bold text-amber-700">{t.freeAddon}</span>
-                            ) : (
-                              <>
-                                {t.priceLabel} {fmtTzs(row.product?.priceTzs || 0)}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => pmRemove(row.productId)}
-                        className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold hover:bg-slate-50"
-                      >
-                        {t.remove}
-                      </button>
-                    </div>
-
-                    <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="inline-flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => pmUpsert(row.productId, -1)}
-                          className="h-9 w-9 rounded-xl border border-slate-200 text-sm font-bold hover:bg-slate-50"
-                        >
-                          −
-                        </button>
-                        <div className="w-10 text-center text-sm font-semibold">{row.qty || 0}</div>
-                        <button
-                          type="button"
-                          onClick={() => pmUpsert(row.productId, +1)}
-                          className="h-9 w-9 rounded-xl border border-slate-200 text-sm font-bold hover:bg-slate-50"
-                        >
-                          +
-                        </button>
-                      </div>
-
-                      <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={row.isFree === true}
-                          onChange={() => pmToggleFree(row.productId)}
-                          className="h-4 w-4 rounded border-slate-300"
-                        />
-                        <span className="text-slate-700">{t.freeAddon}</span>
-                      </label>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">—</div>
-              )}
-            </div>
-          </div>
-
-          {/* Add new items */}
-          <div className="mt-8">
-            <div className="text-sm font-semibold text-slate-900">{t.addNewItems}</div>
-
-            <input
-              value={pmSearch}
-              onChange={(e) => setPmSearch(e.target.value)}
-              placeholder={t.search}
-              className="mt-3 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
-            />
-
-            <div className="mt-3 space-y-2">
-              {pmCandidates.map((p) => (
-                <div
-                  key={p.id}
-                  className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 p-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <Thumb image={p.image} />
-                    <div>
-                      <div className="text-sm font-semibold">{p.name}</div>
-                      <div className="text-xs text-slate-600">
-                        {t.priceLabel} {fmtTzs(p.priceTzs)}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => pmUpsert(p.id, +1)}
-                    className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-600"
-                  >
-                    + Add
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Sticky actions */}
-          <div className="sticky bottom-0 mt-8 bg-white pt-4 border-t border-slate-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <button
-              type="button"
-              onClick={pmSave}
-              disabled={pmSaving}
-              className={`inline-flex items-center justify-center rounded-2xl px-5 py-2 text-sm font-semibold text-white shadow-sm ${
-                pmSaving ? "bg-slate-300 cursor-not-allowed" : "bg-slate-900 hover:bg-slate-800"
-              }`}
-            >
-              {pmSaving ? t.saving : t.saveChanges}
-            </button>
-
-            <button
-              type="button"
-              onClick={pmNewOrder}
-              className="inline-flex items-center justify-center rounded-2xl bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600"
-            >
-              {t.newOrder}
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Product quick view */}
+      {/* ✅ Product quick view (UPDATED) */}
       {activeProduct && (
         <Modal onClose={() => setActiveProduct(null)}>
           <div className="flex items-start justify-between gap-4">
@@ -1232,7 +1232,48 @@ export default function Marketplace() {
             </button>
           </div>
 
-          <div className="mt-4 text-sm text-slate-700">{activeProduct.desc}</div>
+          {/* Image */}
+          <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200 bg-slate-100">
+            {activeProduct.image ? (
+              <img
+                src={activeProduct.image}
+                alt={activeProduct.name}
+                className="h-56 w-full object-cover sm:h-64"
+                loading="lazy"
+              />
+            ) : (
+              <div className="grid h-56 w-full place-items-center text-sm text-slate-500 sm:h-64">
+                No image
+              </div>
+            )}
+          </div>
+
+          {/* Meta */}
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <MetaCard
+              label={t.ratingLabel}
+              value={
+                activeProduct.avgRating !== null && activeProduct.avgRating !== undefined
+                  ? String(activeProduct.avgRating)
+                  : t.noData
+              }
+            />
+            <MetaCard
+              label={t.reviewsLabel}
+              value={
+                activeProduct.reviewsCount !== null && activeProduct.reviewsCount !== undefined
+                  ? String(activeProduct.reviewsCount)
+                  : t.noData
+              }
+            />
+            <MetaCard label={t.regionLabel} value={activeProduct.region || t.noData} />
+            <MetaCard label={t.producerLabel} value={activeProduct.producerGroup || t.noData} />
+          </div>
+
+          {/* Description */}
+          {activeProduct.desc ? (
+            <div className="mt-5 text-sm text-slate-700 whitespace-pre-line">{activeProduct.desc}</div>
+          ) : null}
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
             <button
@@ -1256,17 +1297,12 @@ export default function Marketplace() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-lg font-extrabold">
-                {builderMode === "PACK_REFILL" ? t.tabRefill : t.tabBuyPack} • {builderPackLabel()}
+                {builderMode === "PACK_REFILL" ? t.refillTitle : t.selectPack} {builderPackLabel()}
               </div>
-              <div className="mt-1 text-sm text-slate-600">
-                {builderPackNo ? (
-                  <span className="text-slate-700 font-semibold">Pack No: {builderPackNo}</span>
-                ) : (
-                  `${t.packIncludesBag} • ${t.freeAddons}: ${builderFreeLimit()}`
-                )}
-              </div>
+              {builderPackNo ? (
+                <div className="mt-1 text-xs text-slate-600">{t.packNoLabel}: {builderPackNo}</div>
+              ) : null}
             </div>
-
             <button
               type="button"
               onClick={() => setBuilderOpen(false)}
@@ -1276,20 +1312,147 @@ export default function Marketplace() {
             </button>
           </div>
 
-          <div className="mt-5 flex gap-2 text-xs font-semibold">
+          <div className="mt-4 flex flex-wrap gap-2">
             <StepPill active={builderStep === 1} label={t.stepMain} />
             <StepPill active={builderStep === 2} label={t.stepAddons} />
             <StepPill active={builderStep === 3} label={t.stepReview} />
           </div>
 
-          {/* STEP 1: MAIN */}
           {builderStep === 1 && (
-            <div className="mt-6">
-              <div className="text-sm font-semibold text-slate-900">{t.selectedItems}</div>
+            <div className="mt-6 space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold">
+                    {langKey === "sw" ? "Packs zilizopo" : "Available packs"}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {availablePacks.length
+                      ? `${langKey === "sw" ? "Jumla" : "Total"}: ${availablePacks.length}`
+                      : "—"}
+                  </div>
+                </div>
 
-              <div className="mt-3 space-y-3">
-                {builderMainItemsResolved().length ? (
-                  builderMainItemsResolved().map(({ p, qty }) => (
+                {availablePackLoading ? (
+                  <div className="mt-3 text-sm text-slate-500">{langKey === "sw" ? "Inapakia…" : "Loading…"}</div>
+                ) : availablePackError ? (
+                  <div className="mt-3 text-sm text-red-600">{availablePackError}</div>
+                ) : availablePacks.length === 0 ? (
+                  <div className="mt-3 text-sm text-slate-500">
+                    {langKey === "sw" ? "Hakuna pack zilizopo kwa sasa." : "No available packs right now."}
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    {availablePacks.map((p) => {
+                      const items = availablePackItems[p.id] || [];
+                      const paidItems = items.filter((x) => !x.is_free);
+                      const freeItems = items.filter((x) => x.is_free);
+                      const totalPaid = paidItems.reduce(
+                        (sum, x) => sum + (Number(x.qty || 0) * Number(x.products?.price_tzs || 0)),
+                        0
+                      );
+                      const open = availablePackOpen === p.id;
+
+                      const hasBag =
+                        items.some((x) =>
+                          String(x.products?.product_name || "").toLowerCase().includes("bag")
+                        );
+
+                      return (
+                        <div key={p.id} className="rounded-2xl border border-slate-200 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-semibold">{p.pack_no}</div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {t.priceLabel} {fmtTzs(totalPaid)} •{" "}
+                                {langKey === "sw"
+                                  ? `Vya kulipia: ${paidItems.length}, Bure: ${freeItems.length}`
+                                  : `Paid: ${paidItems.length}, Free: ${freeItems.length}`}
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setAvailablePackOpen(open ? null : p.id)}
+                                className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+                              >
+                                {open ? t.close : t.view}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!hasBag) {
+                                    const proceed = window.confirm(t.bagMissingWarning);
+                                    if (!proceed) return;
+                                  }
+                                  const packLabel = builderPackLabel();
+                                  for (const it of items) {
+                                    const prod = it.products;
+                                    if (!prod?.id) continue;
+                                    addProductToCart(
+                                      {
+                                        id: prod.id,
+                                        name: prod.product_name || "—",
+                                        priceTzs: Number(prod.price_tzs || 0),
+                                      },
+                                      Number(it.qty || 1),
+                                      Boolean(it.is_free),
+                                      {
+                                        source: "PACK_AVAILABLE",
+                                        packLabel,
+                                        flowType: "PACK_PURCHASE",
+                                        packNo: p.pack_no,
+                                        packId: p.id,
+                                      }
+                                    );
+                                  }
+                                  setBuilderOpen(false);
+                                  setCartOpen(true);
+                                }}
+                                className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+                              >
+                                {langKey === "sw" ? "Nunua pack hii" : "Buy this pack"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {open ? (
+                            <div className="mt-3 space-y-2">
+                              {items.map((it) => (
+                                <div
+                                  key={it.id}
+                                  className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-2"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    {it.products?.image ? (
+                                      <img
+                                        src={it.products.image}
+                                        alt={it.products?.product_name || "product"}
+                                        className="h-8 w-8 rounded-lg object-cover"
+                                      />
+                                    ) : null}
+                                    <div className="text-xs font-semibold">{it.products?.product_name || "—"}</div>
+                                  </div>
+                                  <div className="text-xs text-slate-500">
+                                    x{it.qty} •{" "}
+                                    {it.is_free ? t.free : `${t.priceLabel} ${fmtTzs(it.products?.price_tzs || 0)}`}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="text-sm font-semibold text-slate-700">{t.selectedItems}</div>
+              {builderMainItemsResolved().length === 0 ? (
+                <div className="text-sm text-slate-500">{t.mustPickOneItem}</div>
+              ) : (
+                <div className="space-y-3">
+                  {builderMainItemsResolved().map(({ p, qty }) => (
                     <QtyRow
                       key={p.id}
                       image={p.image}
@@ -1297,219 +1460,189 @@ export default function Marketplace() {
                       subtitle={`${t.priceLabel} ${fmtTzs(p.priceTzs)}`}
                       qty={qty}
                       onMinus={() => updateMainQty(p.id, -1)}
-                      onPlus={() => updateMainQty(p.id, +1)}
+                      onPlus={() => updateMainQty(p.id, 1)}
                     />
-                  ))
-                ) : (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">—</div>
-                )}
-              </div>
+                  ))}
+                </div>
+              )}
 
-              <div className="mt-6">
-                <div className="text-sm font-semibold text-slate-900">{t.addMore}</div>
+              {builderAddonItemsResolved().length ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="text-sm font-semibold">{t.freeAddons}</div>
+                  <div className="mt-3 space-y-2">
+                    {builderAddonItemsResolved().map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Thumb image={p.image} />
+                          <div className="text-xs font-semibold">{p.name}</div>
+                        </div>
+                        <div className="text-xs text-emerald-700">{t.free}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="text-sm font-semibold">{t.addMore}</div>
                 <input
                   value={builderSearch}
                   onChange={(e) => setBuilderSearch(e.target.value)}
                   placeholder={t.search}
                   className="mt-3 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
                 />
-
-                <div className="mt-3 space-y-2">
+                <div className="mt-4 space-y-3">
                   {mainCandidates.map((p) => (
                     <AddRow
                       key={p.id}
                       image={p.image}
                       name={p.name}
                       priceLabel={`${t.priceLabel} ${fmtTzs(p.priceTzs)}`}
-                      onAdd={() => updateMainQty(p.id, +1)}
+                      onAdd={() => updateMainQty(p.id, 1)}
                     />
                   ))}
                 </div>
               </div>
-
-              <div className="sticky bottom-0 mt-6 bg-white pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => setBuilderOpen(false)}
-                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-                >
-                  {t.close}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setBuilderStep(2)}
-                  className="inline-flex items-center justify-center rounded-2xl bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600"
-                >
-                  {t.continue}
-                </button>
-              </div>
             </div>
           )}
 
-          {/* STEP 2: ADDONS */}
           {builderStep === 2 && (
-            <div className="mt-6">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-slate-900">{t.stepAddons}</div>
-                <div className="text-xs text-slate-600">
-                  {t.selected}: {Object.keys(builderAddons).length}/{builderFreeLimit()}
-                </div>
+            <div className="mt-6 space-y-4">
+              <div className="text-sm text-slate-600">
+                {t.freeAddons}: {Object.keys(builderAddons).length}/{builderFreeLimit()}
               </div>
-
-              <div className="mt-3 space-y-3">
-                {ADDON_NAMES.map((name) => {
-                  const p = byName.get(String(name).toLowerCase().trim());
-                  if (!p) {
-                    return (
-                      <div key={name} className="rounded-2xl border border-slate-200 p-4 text-sm text-slate-500">
-                        <div className="font-semibold">{name}</div>
-                        <div className="text-xs text-slate-400">{t.notAvailable}</div>
-                      </div>
-                    );
-                  }
-
-                  const checked = !!builderAddons[p.id];
-                  const limit = builderFreeLimit();
-                  const canToggleOn = checked || Object.keys(builderAddons).length < limit;
-
+              {builderFreeLimit() > 0 && Object.keys(builderAddons).length < builderFreeLimit() ? (
+                <div className="text-sm text-amber-700">
+                  {langKey === "sw"
+                    ? `Chagua nyongeza bure ${builderFreeLimit()}`
+                    : `Select ${builderFreeLimit()} free add-on${builderFreeLimit() === 1 ? "" : "s"}`}
+                </div>
+              ) : null}
+              <div className="space-y-3">
+                {addonCandidates.map((p) => {
+                  const selected = !!builderAddons[p.id];
                   return (
-                    <button
+                    <div
                       key={p.id}
-                      type="button"
-                      disabled={!canToggleOn}
-                      onClick={() => toggleAddon(p.id, limit)}
-                      className={`w-full text-left rounded-2xl border p-4 text-sm transition ${
-                        checked ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white hover:bg-slate-50"
-                      } ${!canToggleOn ? "opacity-60 cursor-not-allowed" : ""}`}
+                      className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 p-3"
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <Thumb image={p.image} />
-                          <div>
-                            <div className="font-semibold">{p.name}</div>
-                            <div className="text-xs text-slate-600">
-                              {t.priceLabel} {fmtTzs(p.priceTzs)} • <span className="font-bold text-amber-700">{t.free}</span>
-                            </div>
-                          </div>
+                      <div className="flex items-center gap-3">
+                        <Thumb image={p.image} />
+                        <div>
+                          <div className="text-sm font-semibold">{p.name}</div>
+                          <div className="text-xs text-slate-600">{t.free}</div>
                         </div>
                       </div>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleAddon(p.id, builderFreeLimit())}
+                        className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+                          selected ? "bg-emerald-100 text-emerald-800" : "bg-amber-500 text-white hover:bg-amber-600"
+                        }`}
+                      >
+                        {selected ? t.selected : "+ Add"}
+                      </button>
+                    </div>
                   );
                 })}
               </div>
-
-              <div className="sticky bottom-0 mt-6 bg-white pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => setBuilderStep(1)}
-                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-                >
-                  {t.back}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setBuilderStep(3)}
-                  className="inline-flex items-center justify-center rounded-2xl bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600"
-                >
-                  {t.continue}
-                </button>
-              </div>
             </div>
           )}
 
-          {/* STEP 3: REVIEW */}
           {builderStep === 3 && (
-            <div className="mt-6">
-              <div className="text-sm font-semibold text-slate-900">{t.orderSummary}</div>
-
-              <div className="mt-3 rounded-2xl border border-slate-200 p-4">
-                <div className="text-xs font-semibold text-slate-500">{t.stepMain}</div>
-                <div className="mt-2 space-y-2">
-                  {builderMainItemsResolved().length ? (
-                    builderMainItemsResolved().map(({ p, qty }) => (
-                      <div key={p.id} className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2">
-                          <Thumb image={p.image} />
-                          <div className="text-slate-900">
-                            {p.name} x{qty}
-                          </div>
-                        </div>
-                        <div className="text-slate-700">
-                          {t.priceLabel} {fmtTzs(p.priceTzs)}
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-sm text-slate-500">—</div>
-                  )}
+            <div className="mt-6 space-y-4">
+              {builderMode === "PACK_PURCHASE" &&
+              !(
+                Object.keys(builderMain).some((pid) => bagProductIds.has(String(pid))) ||
+                Object.keys(builderAddons).some((pid) => bagProductIds.has(String(pid)))
+              ) ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  {t.bagMissingWarning}
                 </div>
+              ) : null}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <MetaCard label={t.selectedItems} value={`${builderMainItemsResolved().length}`} />
+                <MetaCard label={t.freeAddons} value={`${builderAddonItemsResolved().length}`} />
+              </div>
 
-                <div className="mt-4 text-xs font-semibold text-slate-500">{t.stepAddons}</div>
-                <div className="mt-2 space-y-2">
-                  {builderAddonItemsResolved().length ? (
-                    builderAddonItemsResolved().map((p) => (
-                      <div key={p.id} className="flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2">
-                          <Thumb image={p.image} />
-                          <div className="text-slate-900">{p.name} x1</div>
-                        </div>
-                        <div className="text-amber-700 font-bold">{t.free}</div>
+              <div className="space-y-3">
+                {builderMainItemsResolved().map(({ p, qty }) => (
+                  <QtyRow
+                    key={p.id}
+                    image={p.image}
+                    name={p.name}
+                    subtitle={`${t.priceLabel} ${fmtTzs(p.priceTzs)}`}
+                    qty={qty}
+                    onMinus={() => updateMainQty(p.id, -1)}
+                    onPlus={() => updateMainQty(p.id, 1)}
+                  />
+                ))}
+              </div>
+
+              {builderAddonItemsResolved().length ? (
+                <div className="mt-4 space-y-2">
+                  {builderAddonItemsResolved().map((p) => (
+                    <div key={p.id} className="flex items-center justify-between rounded-2xl border border-slate-200 p-3">
+                      <div className="flex items-center gap-3">
+                        <Thumb image={p.image} />
+                        <div className="text-sm font-semibold">{p.name}</div>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-sm text-slate-500">—</div>
-                  )}
-                </div>
-
-                <div className="mt-4 text-xs font-semibold text-slate-500">{CRUNCH_BAG_NAME}</div>
-                {builderMode === "PACK_PURCHASE" ? (
-                  <div className="mt-2 flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <Thumb image={crunchBag.image} />
-                      <div className="text-slate-900">{CRUNCH_BAG_NAME} x1</div>
+                      <span className="text-xs font-semibold text-emerald-700">{t.free}</span>
                     </div>
-                    <div className="text-amber-700 font-bold">{t.included}</div>
-                  </div>
-                ) : (
-                  <div className="mt-2 flex items-center justify-between text-sm">
-                    <div className="text-slate-900">{t.optionalAddBag}</div>
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={builderAddBag}
-                        onChange={(e) => setBuilderAddBag(e.target.checked)}
-                        className="h-4 w-4 rounded border-slate-300"
-                      />
-                      <span className="text-slate-700">
-                        {builderAddBag ? `${t.priceLabel} ${fmtTzs(crunchBag.priceTzs)}` : "—"}
-                      </span>
-                    </label>
-                  </div>
-                )}
-              </div>
+                  ))}
+                </div>
+              ) : null}
 
-              <div className="sticky bottom-0 mt-6 bg-white pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => setBuilderStep(2)}
-                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-                >
-                  {t.back}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={finalizePackToCart}
-                  className="inline-flex items-center justify-center rounded-2xl bg-amber-500 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600"
-                >
-                  {t.addToCart}
-                </button>
-              </div>
+              {builderMode === "PACK_REFILL" ? (
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={builderAddBag}
+                    onChange={(e) => setBuilderAddBag(e.target.checked)}
+                  />
+                  {t.optionalAddBag}
+                </label>
+              ) : null}
             </div>
           )}
+
+          <div className="mt-6 flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setBuilderStep((s) => Math.max(1, s - 1))}
+              disabled={builderStep === 1}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              {t.back}
+            </button>
+
+            {builderStep < 3 ? (
+              <button
+                type="button"
+                onClick={() => setBuilderStep((s) => Math.min(3, s + 1))}
+                disabled={
+                  (builderStep === 1 && Object.keys(builderMain).length === 0) ||
+                  (builderStep === 2 &&
+                    builderFreeLimit() > 0 &&
+                    Object.keys(builderAddons).length < builderFreeLimit())
+                }
+                className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:bg-slate-300"
+              >
+                {t.continue}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={finalizePackToCart}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                {t.addToCart}
+              </button>
+            )}
+          </div>
         </Modal>
       )}
 
@@ -1519,9 +1652,8 @@ export default function Marketplace() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-lg font-extrabold">{t.cart}</div>
-              <div className="mt-1 text-sm text-slate-600">{cart.items.length ? `${cartCount} item(s)` : t.empty}</div>
+              <div className="mt-1 text-sm text-slate-600">{t.orderSummary}</div>
             </div>
-
             <button
               type="button"
               onClick={() => setCartOpen(false)}
@@ -1531,132 +1663,112 @@ export default function Marketplace() {
             </button>
           </div>
 
-          <div className="mt-5 space-y-3">
-            {cart.items.length === 0 ? (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">{t.empty}</div>
-            ) : (
-              cart.items.map((it) => (
-                <div key={it.key} className="rounded-2xl border border-slate-200 p-4">
-                  <div className="flex items-start justify-between gap-3">
+          {cart.items.length === 0 ? (
+            <div className="mt-6 text-sm text-slate-500">{langKey === "sw" ? "Hakuna bidhaa kwenye kikapu." : "Your cart is empty."}</div>
+          ) : (
+            <>
+              <div className="mt-6 space-y-3">
+                {cart.items.map((it) => (
+                  <div
+                    key={it.key}
+                    className="flex items-start justify-between gap-3 rounded-2xl border border-slate-200 p-3"
+                  >
                     <div>
-                      <div className="text-sm font-extrabold">{it.name}</div>
-                      <div className="mt-1 text-xs text-slate-600">
-                        {it.isFree ? (
-                          <span className="font-bold text-amber-700">{t.free}</span>
-                        ) : (
-                          <>
-                            {t.priceLabel} {fmtTzs(it.priceTzs)}
-                          </>
-                        )}
-                        {it.packNo ? <span className="ml-2 text-slate-400">• Pack No: {it.packNo}</span> : null}
+                      <div className="text-sm font-semibold">{it.name}</div>
+                      <div className="text-xs text-slate-500">
+                        {it.isFree ? t.free : `${t.priceLabel} ${fmtTzs(it.priceTzs)}`}
                       </div>
+                      {it.packLabel ? (
+                        <div className="mt-1 text-xs text-slate-500">{it.packLabel}</div>
+                      ) : null}
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => deleteCartItem(it.key)}
-                      className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold hover:bg-slate-50"
-                    >
-                      {t.close}
-                    </button>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between">
-                    <div className="inline-flex items-center gap-2">
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => setCartItemQty(it.key, it.qty - 1)}
-                        className="h-9 w-9 rounded-xl border border-slate-200 text-sm font-bold hover:bg-slate-50"
+                        onClick={() => setCartItemQty(it.key, Number(it.qty || 1) - 1)}
+                        className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold hover:bg-slate-50"
                       >
                         −
                       </button>
-                      <div className="w-10 text-center text-sm font-semibold">{it.qty}</div>
+                      <div className="w-8 text-center text-sm font-semibold">{it.qty}</div>
                       <button
                         type="button"
-                        onClick={() => setCartItemQty(it.key, it.qty + 1)}
-                        className="h-9 w-9 rounded-xl border border-slate-200 text-sm font-bold hover:bg-slate-50"
+                        onClick={() => setCartItemQty(it.key, Number(it.qty || 1) + 1)}
+                        className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold hover:bg-slate-50"
                       >
                         +
                       </button>
-                    </div>
-
-                    <div className="text-sm font-semibold text-slate-900">
-                      {it.isFree ? (
-                        <span className="text-amber-700">{t.free}</span>
-                      ) : (
-                        <>
-                          {t.priceLabel} {fmtTzs((Number(it.priceTzs) || 0) * (Number(it.qty) || 0))}
-                        </>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => deleteCartItem(it.key)}
+                        className="ml-1 text-xs font-semibold text-red-600 hover:text-red-700"
+                      >
+                        {t.remove}
+                      </button>
                     </div>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          {cart.items.length > 0 && (
-            <>
-              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between text-sm">
-                  <div className="font-semibold text-slate-700">Total</div>
-                  <div className="font-extrabold text-slate-900">
-                    {t.priceLabel} {fmtTzs(totals.paid)}
-                  </div>
-                </div>
+                ))}
               </div>
 
-              <div className="mt-6">
-                <div className="text-sm font-extrabold">{t.deliveryDetails}</div>
-
-                <div className="mt-3 grid gap-3">
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="text-sm font-extrabold">{t.deliveryDetails}</div>
+                  <label className="mt-3 block text-xs font-semibold text-slate-600">{t.location}</label>
                   <input
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
-                    placeholder={t.location}
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-amber-300"
                   />
+                  <label className="mt-3 block text-xs font-semibold text-slate-600">{t.phone}</label>
                   <input
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    placeholder={t.phone}
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-2 text-sm outline-none focus:border-amber-300"
                   />
-
-                  <div className="rounded-2xl border border-slate-200 p-4">
-                    <div className="text-sm font-semibold">{t.payment}</div>
-                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                      <label className="inline-flex items-center gap-2 text-sm">
-                        <input type="radio" name="pay" checked={paymentMethod === "cash"} onChange={() => setPaymentMethod("cash")} />
-                        {t.cash}
-                      </label>
-
-                      <label className="inline-flex items-center gap-2 text-sm">
-                        <input type="radio" name="pay" checked={paymentMethod === "lipa"} onChange={() => setPaymentMethod("lipa")} />
-                        {t.lipa}
-                      </label>
-                    </div>
+                  <label className="mt-3 block text-xs font-semibold text-slate-600">{t.payment}</label>
+                  <div className="mt-2 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("cash")}
+                      className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+                        paymentMethod === "cash" ? "bg-amber-500 text-white" : "border border-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {t.cash}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("lipa")}
+                      className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+                        paymentMethod === "lipa" ? "bg-amber-500 text-white" : "border border-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {t.lipa}
+                    </button>
                   </div>
                 </div>
 
-                <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="text-sm font-extrabold">{t.orderSummary}</div>
+                  <div className="mt-2 text-sm text-slate-600">
+                    {t.priceLabel} {fmtTzs(totals.paid)}
+                  </div>
                   <button
                     type="button"
-                    onClick={clearCart}
-                    className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-                  >
-                    {t.clearCart}
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={!location.trim() || !phone.trim()}
                     onClick={sendOrderOnWhatsApp}
-                    className={`inline-flex items-center justify-center rounded-2xl px-5 py-2 text-sm font-semibold text-white shadow-sm ${
-                      !location.trim() || !phone.trim() ? "bg-slate-300 cursor-not-allowed" : "bg-amber-500 hover:bg-amber-600"
+                    disabled={!location.trim() || !phone.trim()}
+                    className={`mt-4 w-full rounded-xl px-4 py-2 text-sm font-semibold text-white ${
+                      !location.trim() || !phone.trim() ? "bg-slate-300" : "bg-emerald-600 hover:bg-emerald-700"
                     }`}
                   >
                     {t.sendOrder}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearCart}
+                    className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    {t.clearCart}
                   </button>
                 </div>
               </div>
@@ -1704,7 +1816,6 @@ function PackCard({ title, subtitle, cta, onSelect, imageSrc }) {
             PACK IMAGE
           </div>
         )}
-        {/* ✅ Price badge removed (user hasn't selected items yet) */}
       </div>
 
       <div className="p-6">
@@ -1836,6 +1947,15 @@ function StepPill({ active, label }) {
   return (
     <div className={`rounded-full px-3 py-1 ${active ? "bg-amber-100 text-amber-900" : "bg-slate-100 text-slate-600"}`}>
       {label}
+    </div>
+  );
+}
+
+function MetaCard({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="text-xs font-semibold text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-extrabold text-slate-900">{value}</div>
     </div>
   );
 }

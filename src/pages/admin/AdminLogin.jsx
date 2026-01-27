@@ -167,22 +167,6 @@ export default function AdminLogin() {
           </div>
         )}
 
-        {/* ✅ Google login */}
-        <button
-          type="button"
-          onClick={handleGoogleAdminLogin}
-          disabled={oauthLoading}
-          className="mt-6 w-full rounded-2xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-900 hover:bg-slate-50 disabled:opacity-60"
-        >
-          {oauthLoading ? "…" : "Continue with Google"}
-        </button>
-
-        <div className="my-6 flex items-center gap-3">
-          <div className="h-px flex-1 bg-slate-200" />
-          <div className="text-xs text-slate-500">or</div>
-          <div className="h-px flex-1 bg-slate-200" />
-        </div>
-
         {/* ✅ Email/password login */}
         <form onSubmit={handleAdminLogin} className="space-y-4">
           <input

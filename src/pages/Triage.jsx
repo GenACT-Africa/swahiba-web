@@ -45,7 +45,7 @@ const i18n = {
     },
     questions: {
       intent: {
-        label: "Kipi kinaelezea vizuri unachohitaji leo?",
+        label: "Je, unahitaji nini leo?",
         options: {
           info: "Nahitaji taarifa",
           help: "Nahitaji msaada",
@@ -53,15 +53,15 @@ const i18n = {
         },
       },
       urgency: {
-        label: "Inaonekana ni ya dharura kiasi gani kwa sasa?",
+        label: "Je, unahitaji kwa haraka kiasi gani?",
         options: {
-          not_urgent: "Si ya dharura (naweza kusoma/kujifunza)",
-          soon: "Karibu (nahitaji mwongozo wiki hii)",
-          now: "Sasa (nahitaji msaada leo)",
+          not_urgent: "Si ya dharura",
+          soon: "Karibu (nahitaji mwongozo mapema)",
+          now: "Sasa (nahitaji msaada sasa hivi)",
         },
       },
       danger_now: {
-        label: "Je, upo kwenye hatari ya haraka au unaumizwa sasa hivi?",
+        label: "Je, upo kwenye hatari au unaumizwa sasa hivi?",
         options: { no: "Hapana", yes: "Ndiyo" },
       },
       self_harm: {
@@ -97,7 +97,7 @@ const i18n = {
         },
       },
       nickname: {
-        label: "Jina la utani (Hiari)",
+        label: "Jina (hata la utani)",
         placeholder: "mfano: Amina, KJ, StarGirl",
       },
       area: {
@@ -200,7 +200,7 @@ const i18n = {
         },
       },
       nickname: {
-        label: "Nickname (Optional)",
+        label: "Name (even Nickname)",
         placeholder: "e.g., Amina, KJ, StarGirl",
       },
       area: {

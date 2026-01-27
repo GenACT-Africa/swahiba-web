@@ -22,8 +22,14 @@ const EMPTY_FORM = {
   topic: "",
   language: "sw",
   content: "",
+  resource_type: "article", // Added to handle different content types
+  video_url: "", // For video content (YouTube/Vimeo)
+  thumbnail_url: "", // For video thumbnail
+  tags: "", // Tags to associate with the resource
   published: true,
 };
+
+const RESOURCE_TYPE_ICONS = { article: "📝", video: "🎥", infographic: "📊" };
 
 export default function ManageResources() {
   const navigate = useNavigate();
@@ -97,7 +103,7 @@ export default function ManageResources() {
     try {
       const { data, error } = await supabase
         .from("resources")
-        .select("id, title, topic, language, content, published, created_at, updated_at")
+        .select("id, title, topic, language, content, resource_type, video_url, thumbnail_url, tags, published, created_at, updated_at")
         .order("updated_at", { ascending: false });
 
       if (error) throw error;
@@ -160,6 +166,10 @@ export default function ManageResources() {
       topic: r.topic || "",
       language: r.language || "sw",
       content: r.content || "",
+      resource_type: r.resource_type || "article", // Editing resource type
+      video_url: r.video_url || "", // Editing video URL
+      thumbnail_url: r.thumbnail_url || "", // Editing thumbnail URL
+      tags: r.tags || "", // Editing tags
       published: !!r.published,
     });
     setOpen(true);
@@ -194,6 +204,10 @@ export default function ManageResources() {
         topic: form.topic.trim(),
         language: form.language.trim().toLowerCase(),
         content: form.content.trim(),
+        resource_type: form.resource_type.trim(),
+        video_url: form.video_url.trim(),
+        thumbnail_url: form.thumbnail_url.trim(),
+        tags: form.tags.trim(),
         published: !!form.published,
         updated_at: nowIso,
       };
@@ -467,7 +481,6 @@ export default function ManageResources() {
                   {form.id ? "Edit resource" : "Add resource"}
                 </div>
                 <div className="mt-1 text-sm text-slate-600">
-                  This editor matches your current DB table (title/topic/language/content/published).
                 </div>
               </div>
 
@@ -516,6 +529,45 @@ export default function ManageResources() {
                 </select>
               </Field>
 
+              <Field label="Resource Type" required>
+                <select
+                  value={form.resource_type}
+                  onChange={(e) => setForm((p) => ({ ...p, resource_type: e.target.value }))}
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-slate-400"
+                >
+                  <option value="article">Article</option>
+                  <option value="video">Video</option>
+                  <option value="infographic">Infographic</option>
+                </select>
+              </Field>
+
+              <Field label="Video URL (if applicable)">
+                <input
+                  value={form.video_url}
+                  onChange={(e) => setForm((p) => ({ ...p, video_url: e.target.value }))}
+                  placeholder="Enter YouTube or Vimeo link"
+                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                />
+              </Field>
+
+              <Field label="Thumbnail URL (if applicable)">
+                <input
+                  value={form.thumbnail_url}
+                  onChange={(e) => setForm((p) => ({ ...p, thumbnail_url: e.target.value }))}
+                  placeholder="Enter thumbnail image URL"
+                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                />
+              </Field>
+
+              <Field label="Tags (comma separated)">
+                <input
+                  value={form.tags}
+                  onChange={(e) => setForm((p) => ({ ...p, tags: e.target.value }))}
+                  placeholder="e.g. health, education, mental health"
+                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                />
+              </Field>
+
               <div className="flex items-center gap-3 sm:pt-8">
                 <input
                   id="published"
@@ -526,18 +578,6 @@ export default function ManageResources() {
                 <label htmlFor="published" className="text-sm font-semibold text-slate-700">
                   Published (visible to public)
                 </label>
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="text-sm font-semibold text-slate-700">
-                  Content <span className="text-red-600">*</span>
-                </label>
-                <textarea
-                  rows={8}
-                  value={form.content}
-                  onChange={(e) => setForm((p) => ({ ...p, content: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
               </div>
             </div>
 

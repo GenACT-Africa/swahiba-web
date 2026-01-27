@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useLanguage } from "../context/LanguageContext.jsx";
@@ -30,6 +30,20 @@ async function resolveAvatar(avatarUrlOrPath) {
   }
 }
 
+function normalizePhoneInput(value) {
+  const cleaned = String(value || "").replace(/[^\d+]/g, "").trim();
+  if (!cleaned) return "";
+  if (cleaned.startsWith("+")) return cleaned;
+  if (cleaned.startsWith("255")) return `+${cleaned}`;
+  if (cleaned.startsWith("0") && cleaned.length === 10) {
+    return `+255${cleaned.slice(1)}`;
+  }
+  if (/^[67]\d{8}$/.test(cleaned)) {
+    return `+255${cleaned}`;
+  }
+  return cleaned;
+}
+
 function expertiseFromProfileRow(row, langKey) {
   const labels =
     langKey === "sw"
@@ -55,6 +69,31 @@ function expertiseFromProfileRow(row, langKey) {
   return on.map((k) => labels[k]);
 }
 
+// (passkey helpers removed)
+
+// (passkey helpers removed)
+
+async function getFunctionErrorMessage(error, fallback) {
+  if (!error) return fallback;
+  const response = error?.context?.response;
+  if (response?.json) {
+    try {
+      const data = await response.clone().json();
+      if (data?.details) return data.details;
+      if (data?.error) return data.error;
+    } catch {
+      // ignore parse errors
+    }
+    try {
+      const text = await response.clone().text();
+      if (text) return text;
+    } catch {
+      // ignore parse errors
+    }
+  }
+  return error.message || fallback;
+}
+
 export default function Talk() {
   const { lang } = useLanguage();
   const langKey = useMemo(() => (lang === "SW" ? "sw" : "en"), [lang]);
@@ -77,6 +116,29 @@ export default function Talk() {
     channel: "whatsapp",
     phone: "",
   });
+  const [requestSent, setRequestSent] = useState(false);
+  const [activeRequest, setActiveRequest] = useState(null);
+  const [accessCodeInput, setAccessCodeInput] = useState("");
+  const [accessCodeSet, setAccessCodeSet] = useState(false);
+  const [onboardError, setOnboardError] = useState("");
+  const [onboardLoading, setOnboardLoading] = useState(false);
+  const [userChatLoading, setUserChatLoading] = useState(false);
+  const [userChatError, setUserChatError] = useState("");
+  const [userChatMessages, setUserChatMessages] = useState([]);
+  const [userChatInput, setUserChatInput] = useState("");
+  const [userChatConversationId, setUserChatConversationId] = useState(null);
+  const [chatWidgetOpen, setChatWidgetOpen] = useState(false);
+  const [chatAccessCode, setChatAccessCode] = useState("");
+  const [chatAccessCodeInput, setChatAccessCodeInput] = useState("");
+  const [chatPhoneInput, setChatPhoneInput] = useState("");
+  const [chatPhone, setChatPhone] = useState("");
+  const [chatRequest, setChatRequest] = useState(null);
+  const [chatUnread, setChatUnread] = useState(0);
+  const chatChannelRef = useRef(null);
+  const chatPollRef = useRef(null);
+  const lastMessageCountRef = useRef(0);
+  const chatEndRef = useRef(null);
+  const finishRequestRef = useRef(null);
 
   /* ======================
      COPY
@@ -104,12 +166,28 @@ export default function Talk() {
           introForm: "Jaza fomu hii. Swahiba atawasiliana nawe.",
           close: "Funga",
           needLabel: "Aina ya msaada",
+          needHelpTitle: "Unahitaji msaada gani?",
+          needHelpDesc: "Chagua aina ya msaada unaohitaji kutoka kwa Swahiba.",
           descLabel: "Maelezo",
           channelLabel: "Njia ya mawasiliano",
+          channelTitle: "Njia ya mawasiliano",
+          channelDesc: "Chagua jinsi unavyopendelea Swahiba akuwasiliane.",
           phoneLabel: "Namba ya simu",
           nicknameLabel: "Jina la utani (hiari)",
           whereLabel: "Mahali ulipo",
           success: "Ombi limetumwa. Swahiba atawasiliana nawe.",
+          createAccessCode: "Tengeneza nambari ya siri",
+          accessCodeHint:
+            "Chagua nambari/neno lenye herufi au namba 4. Utalitumia kufungua chat baadaye.",
+          saveAccessCode: "Hifadhi nambari ya siri",
+          finishRequest: "Maliza ombi",
+          submitRequest: "Wasilisha ombi",
+          rememberAccessCode:
+            "Hifadhi nambari yako ya siri. Utaijumuia kufungua chat baadaye.",
+          pinLabel: "PIN (herufi/namba 4)",
+          accessChat: "Fungua chat",
+          phoneRequired: "Namba ya simu inahitajika.",
+
         }
       : {
           title: "Talk to a Swahiba",
@@ -132,12 +210,28 @@ export default function Talk() {
           introForm: "Fill this form. The Swahiba will contact you.",
           close: "Close",
           needLabel: "Need type",
+          needHelpTitle: "What do you need?",
+          needHelpDesc: "Choose the type of support you want from Swahiba.",
           descLabel: "Description",
           channelLabel: "Preferred channel",
+          channelTitle: "Preferred communication",
+          channelDesc: "Pick how you’d like Swahiba to reach you.",
           phoneLabel: "Phone",
           nicknameLabel: "Nickname (optional)",
           whereLabel: "Your location",
           success: "Request sent. The Swahiba will contact you.",
+          createAccessCode: "Create access code",
+          accessCodeHint:
+            "Choose a 4 character code (letters or numbers). You will use it to open your chat later.",
+          saveAccessCode: "Save access code",
+          finishRequest: "Finish request",
+          submitRequest: "Submit request",
+          rememberAccessCode:
+            "Keep your access code safe. You will use it to open your chat later.",
+          pinLabel: "PIN (4 letters/numbers)",
+          accessChat: "Open chat",
+          phoneRequired: "Phone number is required.",
+
         };
 
   /* ======================
@@ -172,7 +266,7 @@ export default function Talk() {
         expertise_nutrition
       `
       )
-      .neq("role", "admin");
+      .eq("role", "swahiba");
 
     if (!error) {
       const rows = data || [];
@@ -196,12 +290,32 @@ export default function Talk() {
   useEffect(() => {
     if (location.state?.swahiba) {
       const s = location.state.swahiba;
-      // try to match in loaded list for full details
       const found = swahibas.find((x) => x.id === s.id) || s;
       onSelectSwahiba(found);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, swahibas]);
+
+  useEffect(() => {
+    if (!location.state?.assessment) return;
+    const a = location.state.assessment;
+    setForm((f) => ({
+      ...f,
+      nickname: a.nickname || f.nickname,
+      location: a.location || f.location,
+      need: a.need || f.need,
+      description: a.description || f.description,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state?.assessment]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const openChat = params.get("chat");
+    if (openChat) {
+      setChatWidgetOpen(true);
+    }
+  }, [location.search]);
 
   /* ======================
      FILTERING
@@ -228,11 +342,24 @@ export default function Talk() {
 
   function onSelectSwahiba(s) {
     setSelected(s);
-
-    // Prefill phone if the swahiba has a phone number and user hasn't typed one
-    if (s?.phone_number && !form.phone) {
-      setForm((f) => ({ ...f, phone: s.phone_number }));
+    setRequestSent(false);
+    setActiveRequest(null);
+    setAccessCodeInput("");
+    setAccessCodeSet(false);
+    setOnboardError("");
+    setOnboardLoading(false);
+    setUserChatMessages([]);
+    setUserChatError("");
+    setUserChatInput("");
+    setUserChatConversationId(null);
+    setChatRequest(null);
+    setChatUnread(0);
+    if (chatChannelRef.current) {
+      supabase.removeChannel(chatChannelRef.current);
+      chatChannelRef.current = null;
     }
+
+    // Do not prefill phone number
   }
 
   /* ======================
@@ -240,57 +367,228 @@ export default function Talk() {
   ====================== */
   async function submitRequest() {
     if (!selected) return;
-
-    const { data: request, error } = await supabase
-      .from("requests")
-      .insert([
-        {
-          swahiba_id: selected.id,
-          nickname: form.nickname || "Anonymous",
-          location: form.location || null,
-          need: form.need,
-          description: form.description || null,
-          channel: form.channel || null,
-          phone: form.phone || null,
-        },
-      ])
-      .select()
-      .single();
-
-    if (error) {
-      console.error("Supabase error:", error);
-      alert(error.message);
+    if (!form.phone) {
+      setOnboardError(t.phoneRequired);
+      return;
+    }
+    if (!accessCodeInput || accessCodeInput.length < 4) {
+      setOnboardError(t.accessCodeHint);
       return;
     }
 
-    await supabase.from("notifications").insert([
-      {
-        user_id: selected.id,
-        type: "request",
-        title: "New request to talk",
-        body: `${form.nickname || "Someone"} wants to talk about ${form.need}`,
-        metadata: {
-          request_id: request.id,
-          description: form.description,
-          channel: form.channel,
-          phone: form.phone,
-          location: form.location,
-        },
-      },
-    ]);
+    setOnboardError("");
+    setOnboardLoading(true);
 
-    setSelected(null);
-    setForm({
-      nickname: "",
-      location: "",
-      need: "info",
-      description: "",
-      channel: "whatsapp",
-      phone: "",
+    const normalizedPhone = normalizePhoneInput(form.phone);
+    const { error } = await supabase.functions.invoke("request-onboard", {
+      body: {
+        action: "set_access_code_no_otp",
+        phone: normalizedPhone,
+        access_code: accessCodeInput,
+      },
     });
 
-    alert(t.success);
+    if (error) {
+      const message = await getFunctionErrorMessage(error, "PIN setup failed.");
+      setOnboardError(message);
+      setOnboardLoading(false);
+      return;
+    }
+
+    setAccessCodeSet(true);
+    setOnboardLoading(false);
+    setTimeout(() => {
+      if (finishRequestRef.current) {
+        finishRequestRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+      }
+    }, 0);
   }
+
+  async function createRequestWithPin() {
+    setOnboardError("");
+    setOnboardLoading(true);
+
+    const normalizedPhone = normalizePhoneInput(form.phone);
+    const { data, error } = await supabase.functions.invoke("request-onboard", {
+      body: {
+        action: "create_request_with_pin",
+        phone: normalizedPhone,
+        access_code: accessCodeInput,
+        swahiba_id: selected.id,
+        nickname: form.nickname || "Anonymous",
+        location: form.location || null,
+        need: form.need,
+        description: form.description || null,
+        channel: form.channel || null,
+      },
+    });
+
+    if (error) {
+      const message = await getFunctionErrorMessage(error, "Failed to create request.");
+      setOnboardError(message);
+      setOnboardLoading(false);
+      return;
+    }
+
+    setActiveRequest(data?.request || null);
+    setRequestSent(true);
+    setOnboardLoading(false);
+  }
+
+  async function loadUserChatHistory(phone, accessCode, { silent = false } = {}) {
+    if (!silent) {
+      setUserChatLoading(true);
+      setUserChatError("");
+      setUserChatMessages([]);
+    }
+
+    const normalizedPhone = normalizePhoneInput(phone);
+    const { data, error } = await supabase.functions.invoke("user-request-chat", {
+      body: { phone: normalizedPhone, access_code: accessCode, action: "history" },
+    });
+
+    if (error) {
+      if (!silent) {
+        const message = await getFunctionErrorMessage(error, "Failed to load chat.");
+        setUserChatError(message);
+        setUserChatLoading(false);
+      }
+      return;
+    }
+
+    setUserChatConversationId(data?.conversation_id || null);
+    const nextMessages = data?.messages || [];
+    setUserChatMessages(nextMessages);
+    setChatRequest(data?.request || null);
+    if (!chatWidgetOpen) {
+      const prevCount = lastMessageCountRef.current;
+      if (nextMessages.length > prevCount) {
+        setChatUnread(nextMessages.length - prevCount);
+      }
+    }
+    lastMessageCountRef.current = nextMessages.length;
+    if (!silent) setUserChatLoading(false);
+  }
+
+  useEffect(() => {
+    if (!chatPhone || !chatAccessCode) return;
+    setChatAccessCodeInput(chatAccessCode);
+    lastMessageCountRef.current = 0;
+    setChatUnread(0);
+    loadUserChatHistory(chatPhone, chatAccessCode);
+  }, [chatPhone, chatAccessCode]);
+
+  useEffect(() => {
+    if (chatWidgetOpen) {
+      setChatUnread(0);
+    }
+  }, [chatWidgetOpen]);
+
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [userChatMessages, userChatConversationId, chatWidgetOpen]);
+
+  useEffect(() => {
+    if (!userChatConversationId) {
+      if (chatChannelRef.current) {
+        supabase.removeChannel(chatChannelRef.current);
+        chatChannelRef.current = null;
+      }
+      return;
+    }
+
+    if (chatChannelRef.current) {
+      supabase.removeChannel(chatChannelRef.current);
+      chatChannelRef.current = null;
+    }
+
+    const ch = supabase
+      .channel(`request-chat-user:${userChatConversationId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${userChatConversationId}`,
+        },
+        (payload) => {
+          const msg = payload?.new;
+          if (!msg?.id) return;
+          setUserChatMessages((prev) =>
+            prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
+          );
+        }
+      )
+      .subscribe();
+
+    chatChannelRef.current = ch;
+
+    return () => {
+      if (chatChannelRef.current) {
+        supabase.removeChannel(chatChannelRef.current);
+        chatChannelRef.current = null;
+      }
+    };
+  }, [userChatConversationId]);
+
+  useEffect(() => {
+    const code = chatAccessCode;
+    const phone = chatPhone;
+    if (!code || !phone) return;
+
+    if (chatPollRef.current) {
+      clearInterval(chatPollRef.current);
+      chatPollRef.current = null;
+    }
+
+    chatPollRef.current = setInterval(() => {
+      loadUserChatHistory(phone, code, { silent: true });
+    }, 5000);
+
+    return () => {
+      if (chatPollRef.current) {
+        clearInterval(chatPollRef.current);
+        chatPollRef.current = null;
+      }
+    };
+  }, [chatAccessCode, chatPhone]);
+
+  async function sendUserChatMessage() {
+    const text = userChatInput.trim();
+    if (!text || !chatAccessCode || !chatPhone) return;
+    setUserChatLoading(true);
+    setUserChatError("");
+
+    const normalizedPhone = normalizePhoneInput(chatPhone);
+    const { data, error } = await supabase.functions.invoke("user-request-chat", {
+      body: { phone: normalizedPhone, access_code: chatAccessCode, action: "send", message: text },
+    });
+
+    if (error) {
+      const message = await getFunctionErrorMessage(error, "Failed to send message.");
+      setUserChatError(message);
+      setUserChatLoading(false);
+      return;
+    }
+
+    if (data?.conversation_id && data?.conversation_id !== userChatConversationId) {
+      setUserChatConversationId(data.conversation_id);
+      setChatRequest((prev) =>
+        prev ? { ...prev, conversation_id: data.conversation_id, status: "accepted" } : prev
+      );
+    }
+
+    if (data?.message) {
+      setUserChatMessages((prev) => [...prev, data.message]);
+    }
+    setUserChatInput("");
+    setUserChatLoading(false);
+  }
+
+  // (passkey login removed)
 
   /* ======================
      UI
@@ -342,13 +640,7 @@ export default function Talk() {
             </div>
           ) : filtered.length ? (
             filtered.map((s) => (
-              <SwahibaCard
-                key={s.id}
-                s={s}
-                t={t}
-                langKey={langKey}
-                onTalk={() => onSelectSwahiba(s)}
-              />
+              <SwahibaCard key={s.id} s={s} t={t} langKey={langKey} onTalk={() => onSelectSwahiba(s)} />
             ))
           ) : (
             <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
@@ -463,34 +755,46 @@ export default function Talk() {
               className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
             />
 
-            <select
-              value={form.need}
-              onChange={(e) => setForm({ ...form, need: e.target.value })}
-              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
-            >
-              <option value="info">{langKey === "sw" ? "Taarifa" : "Information"}</option>
-              <option value="service">{langKey === "sw" ? "Huduma" : "Service"}</option>
-              <option value="product">{langKey === "sw" ? "Bidhaa" : "Products"}</option>
-            </select>
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-slate-600">{t.needHelpTitle}</div>
+              <div className="text-xs text-slate-500">{t.needHelpDesc}</div>
+              <select
+                value={form.need}
+                onChange={(e) => setForm({ ...form, need: e.target.value })}
+                className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
+              >
+                <option value="info">{langKey === "sw" ? "Taarifa" : "Information"}</option>
+                <option value="service">{langKey === "sw" ? "Huduma" : "Service"}</option>
+                <option value="product">{langKey === "sw" ? "Bidhaa" : "Products"}</option>
+              </select>
+            </div>
 
             <textarea
-              placeholder={langKey === "sw" ? "Eleza unachotaka kuzungumzia" : "Tell us what you want to talk about"}
+              placeholder={
+                langKey === "sw"
+                  ? "Eleza unachotaka kuzungumzia"
+                  : "Tell us what you want to talk about"
+              }
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               className="min-h-[110px] rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
             />
 
-            <select
-              value={form.channel}
-              onChange={(e) => setForm({ ...form, channel: e.target.value })}
-              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
-            >
-              <option value="whatsapp">WhatsApp</option>
-              <option value="sms">SMS</option>
-              <option value="call">{langKey === "sw" ? "Simu" : "Phone call"}</option>
-              <option value="email">Email</option>
-              <option value="meetup">{langKey === "sw" ? "Tukutane" : "Meet up"}</option>
-            </select>
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-slate-600">{t.channelTitle}</div>
+              <div className="text-xs text-slate-500">{t.channelDesc}</div>
+              <select
+                value={form.channel}
+                onChange={(e) => setForm({ ...form, channel: e.target.value })}
+                className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
+              >
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="call">{langKey === "sw" ? "Simu" : "Phone call"}</option>
+                <option value="email">Email</option>
+                <option value="meetup">{langKey === "sw" ? "Tukutane" : "Meet up"}</option>
+              </select>
+            </div>
 
             <input
               placeholder={t.phoneLabel}
@@ -499,16 +803,198 @@ export default function Talk() {
               className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
             />
 
+            <input
+              placeholder={t.pinLabel}
+              value={accessCodeInput}
+              onChange={(e) => setAccessCodeInput(e.target.value)}
+              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-amber-300"
+            />
             <button
               onClick={submitRequest}
-              className="mt-2 rounded-2xl bg-amber-500 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-amber-600"
+              disabled={requestSent || onboardLoading || accessCodeInput.length < 4}
+              className="mt-2 rounded-2xl bg-amber-500 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:bg-slate-300"
               type="button"
             >
-              {t.request}
+              {t.saveAccessCode}
             </button>
           </div>
+
+          {accessCodeSet && !requestSent ? (
+            <div
+              ref={finishRequestRef}
+              className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 space-y-3"
+            >
+              <div className="text-sm font-semibold">{t.finishRequest}</div>
+              <button
+                type="button"
+                disabled={onboardLoading}
+                onClick={createRequestWithPin}
+                className="w-full rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:bg-slate-300"
+              >
+                {t.submitRequest}
+              </button>
+              <div className="text-xs text-slate-500">{t.rememberAccessCode}</div>
+            </div>
+          ) : null}
+
+          {onboardError ? (
+            <div className="mt-4 text-sm text-red-600">{onboardError}</div>
+          ) : null}
+
+          {requestSent ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {t.rememberAccessCode}
+            </div>
+          ) : null}
         </Modal>
       )}
+
+      <div className="fixed bottom-5 right-5 z-[80]">
+        {chatWidgetOpen ? (
+          <div className="w-[320px] sm:w-[360px] rounded-3xl border border-slate-200 bg-white shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                Chat
+                {chatUnread > 0 ? (
+                  <span className="inline-flex min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px] font-bold items-center justify-center">
+                    {chatUnread > 9 ? "9+" : chatUnread}
+                  </span>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => setChatWidgetOpen(false)}
+                className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+              >
+                Close
+              </button>
+            </div>
+
+            {!chatAccessCode || !chatPhone ? (
+              <div className="p-4 space-y-3">
+                <div className="text-sm text-slate-600">{t.accessChat}</div>
+                <input
+                  value={chatPhoneInput}
+                  onChange={(e) => setChatPhoneInput(e.target.value)}
+                  placeholder={t.phoneLabel}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-300"
+                />
+                <input
+                  value={chatAccessCodeInput}
+                  onChange={(e) => setChatAccessCodeInput(e.target.value)}
+                  placeholder={t.pinLabel}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-300"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const phone = normalizePhoneInput(chatPhoneInput);
+                    const pin = chatAccessCodeInput.trim();
+                    if (!phone || !pin) return;
+                    setChatPhone(phone);
+                    setChatAccessCode(pin);
+                    loadUserChatHistory(phone, pin);
+                  }}
+                  className="w-full rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600"
+                >
+                  {t.accessChat}
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="px-4 py-2 text-xs text-slate-500 border-b border-slate-200">
+                  {chatRequest?.need ? `Topic: ${chatRequest.need}` : "Chat"}
+                </div>
+                <div className="max-h-64 overflow-auto p-4 space-y-3">
+                  {userChatError ? (
+                    <div className="text-sm text-red-600">{userChatError}</div>
+                  ) : userChatLoading && userChatMessages.length === 0 ? (
+                    <div className="text-sm text-slate-500">Loading chat…</div>
+                  ) : userChatMessages.length === 0 ? (
+                    <div className="text-sm text-slate-500">No messages yet.</div>
+                  ) : (
+                    userChatMessages.map((m) => {
+                      const isMe = m.sender_id === chatRequest?.created_by;
+                      return (
+                        <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                          <div
+                            className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${
+                              isMe ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-900"
+                            }`}
+                          >
+                            <div className="whitespace-pre-wrap">{m.body}</div>
+                            <div className={`mt-1 text-[10px] ${isMe ? "text-amber-100" : "text-slate-500"}`}>
+                              {m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+
+                <div className="border-t border-slate-200 p-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={userChatInput}
+                      onChange={(e) => setUserChatInput(e.target.value)}
+                      placeholder="Type a message…"
+                      disabled={userChatLoading}
+                      className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-300 disabled:bg-slate-50"
+                    />
+                    <button
+                      onClick={sendUserChatMessage}
+                      disabled={userChatLoading || !userChatInput.trim()}
+                      className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:bg-slate-300"
+                      type="button"
+                    >
+                      Send
+                    </button>
+                  </div>
+                  <div className="mt-2 flex justify-between text-[11px] text-slate-500">
+                    <span>{`${chatPhone} • ${t.pinLabel}`}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChatAccessCode("");
+                        setChatAccessCodeInput("");
+                        setChatPhone("");
+                        setChatPhoneInput("");
+                        setChatRequest(null);
+                        setUserChatMessages([]);
+                        setUserChatConversationId(null);
+                        setUserChatError("");
+                        setUserChatInput("");
+                        if (chatChannelRef.current) {
+                          supabase.removeChannel(chatChannelRef.current);
+                          chatChannelRef.current = null;
+                        }
+                      }}
+                      className="font-semibold text-slate-600 hover:text-slate-800"
+                    >
+                      Switch number
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setChatWidgetOpen(true)}
+            className="relative rounded-full bg-amber-500 text-white px-4 py-3 shadow-lg hover:bg-amber-600"
+          >
+            Chat
+            {chatUnread > 0 && (
+              <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px] font-bold flex items-center justify-center">
+                {chatUnread > 9 ? "9+" : chatUnread}
+              </span>
+            )}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

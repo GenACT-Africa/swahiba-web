@@ -3,29 +3,35 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabaseClient";
 
 /**
- * AdminPanel.jsx (Improved + Packs Manager)
+ * AdminPanel.jsx (Updated)
  *
- * Adds:
- * ✅ "Packs" button between Products and Resources
- * ✅ Packs Manager modal:
- *   - View packs (by type, sold/not sold)
- *   - Create available packs (generates Pack No via RPC generate_pack_no(), then inserts pack)
- *   - Edit pack contents (add/remove products, update qty, mark is_free)
+ * Changes requested:
+ * ✅ 1) Removed "Sign out" button from Admin Panel UI (and Not-authorized screen too)
+ * ✅ 2) Admin can view ALL cases, and see which Swahiba is handling each case
+ *    - We try to detect which "handler" column exists on `cases` (e.g. assigned_swahiba_id, swahiba_id, etc.)
+ *    - Then we load the Swahiba profile details from `profiles` and show them in the inbox + case details modal
  *
- * Assumed tables:
- * - profiles (id, role)
- * - cases
- * - follow_up_tasks
- * - products (id, product_name, price_tzs, image_url/image_path, is_active)
- * - packs (id, pack_no, pack_type, user_id, is_active, created_at, updated_at)
- * - pack_items (id, pack_id, product_id, qty, is_free, created_at, updated_at)
- *
- * Notes:
- * - "Sold" is computed as packs.user_id != null (no extra column needed)
- * - "Need refill" can be added later as a DB field; currently shown as "—" (placeholder)
+ * NOTE:
+ * - This is FRONTEND support. Your Supabase RLS MUST allow admin to SELECT cases + profiles.
+ * - If admin is receiving notifications for all cases, but can't read them, it’s 100% an RLS/permissions issue.
  */
 
 const NOTE_TABLE_CANDIDATES = ["interactions", "case_notes"];
+
+/**
+ * Candidate columns that might store the Swahiba handler/assignee on cases.
+ * Put the most likely/desired first.
+ */
+const CASE_HANDLER_FIELD_CANDIDATES = [
+  "assigned_swahiba_id",
+  "swahiba_id",
+  "assigned_to",
+  "handler_id",
+  "handled_by",
+  "handled_by_id",
+  "assigned_peer_id",
+  "peer_id",
+];
 
 const QUICK_FILTERS = [
   { key: "all", label: "All" },
@@ -141,6 +147,34 @@ async function isAdminSafe(user) {
   return metaRole === "admin";
 }
 
+/**
+ * Load cases and ALSO detect which handler field exists.
+ * We avoid selecting non-existent columns by trying them one by one.
+ */
+async function loadCasesWithDetectedHandlerField() {
+  const baseCols =
+    "id, case_code, nickname, location, risk_level, tags, status, outcome_status, last_contact_at, created_at, updated_at";
+
+  // Try different handler columns until one works
+  for (const field of CASE_HANDLER_FIELD_CANDIDATES) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await supabase
+      .from("cases")
+      .select(`${baseCols}, ${field}`)
+      .order("updated_at", { ascending: false });
+
+    if (!res.error) {
+      return { rows: res.data ?? [], handlerField: field };
+    }
+  }
+
+  // Fallback: load without handler field
+  const fallback = await supabase.from("cases").select(baseCols).order("updated_at", { ascending: false });
+  if (fallback.error) throw fallback.error;
+
+  return { rows: fallback.data ?? [], handlerField: null };
+}
+
 export default function AdminPanel() {
   const navigate = useNavigate();
 
@@ -158,6 +192,10 @@ export default function AdminPanel() {
   const [tasks, setTasks] = useState([]);
   const [noteTable, setNoteTable] = useState(null);
   const [notes, setNotes] = useState([]);
+
+  // ✅ handler field + profiles map
+  const [caseHandlerField, setCaseHandlerField] = useState(null);
+  const [handlersById, setHandlersById] = useState({}); // { [profileId]: profileRow }
 
   // Health metrics
   const [health, setHealth] = useState({
@@ -177,6 +215,21 @@ export default function AdminPanel() {
 
   // Packs Manager UI
   const [showPacks, setShowPacks] = useState(false);
+
+  // ✅ Case details modal
+  const [showCaseModal, setShowCaseModal] = useState(false);
+  const [selectedCase, setSelectedCase] = useState(null);
+
+  const openCaseModalById = (caseId) => {
+    const found = (cases || []).find((c) => c.id === caseId) || null;
+    setSelectedCase(found);
+    setShowCaseModal(true);
+  };
+
+  const openCaseModal = (caseRow) => {
+    setSelectedCase(caseRow || null);
+    setShowCaseModal(true);
+  };
 
   // --- Track auth state ---
   useEffect(() => {
@@ -233,36 +286,32 @@ export default function AdminPanel() {
     };
   }, [me?.id]);
 
-  async function signOut() {
-    await supabase.auth.signOut();
-    navigate("/admin/login", { replace: true });
-  }
-
   async function loadAll() {
     setErr("");
     setLoading(true);
 
     try {
-      const [casesRes, tasksRes] = await Promise.all([
-        supabase
-          .from("cases")
-          .select(
-            "id, case_code, nickname, location, risk_level, tags, status, outcome_status, last_contact_at, created_at, updated_at"
-          )
-          .order("updated_at", { ascending: false }),
+      // 1) Load cases (and detect handler field)
+      const { rows: caseRows, handlerField } = await loadCasesWithDetectedHandlerField();
+      setCaseHandlerField(handlerField);
 
-        supabase.from("follow_up_tasks").select("id, case_id, title, due_at, status, created_at, completed_at").order("due_at", {
-          ascending: true,
-        }),
-      ]);
+      // 2) Load tasks
+      const tasksRes = await supabase
+        .from("follow_up_tasks")
+        .select("id, case_id, title, due_at, status, created_at, completed_at")
+        .order("due_at", { ascending: true });
 
-      if (casesRes.error) throw casesRes.error;
       const taskRows = tasksRes.error ? [] : tasksRes.data ?? [];
 
+      // 3) Notes (best-effort)
       const notesRes = await tryTables(NOTE_TABLE_CANDIDATES, async (table) => {
         const q =
           table === "interactions"
-            ? supabase.from(table).select("id, case_id, note, created_at, author_role").order("created_at", { ascending: false }).limit(10)
+            ? supabase
+                .from(table)
+                .select("id, case_id, note, created_at, author_role")
+                .order("created_at", { ascending: false })
+                .limit(10)
             : supabase.from(table).select("id, case_id, note, created_at").order("created_at", { ascending: false }).limit(10);
 
         const { data, error } = await q;
@@ -273,6 +322,7 @@ export default function AdminPanel() {
       setNoteTable(notesRes.table);
       setNotes(notesRes.data ?? []);
 
+      // 4) Health metrics
       const [referralsActive, productsActive, productsMissingImage, resourcesActive, resourcesMissingLang] = await Promise.all([
         safeCount("referral_services", (q) => q.eq("is_active", true)),
         safeCount("products", (q) => q.eq("is_active", true)),
@@ -289,7 +339,40 @@ export default function AdminPanel() {
         resourcesMissingLang,
       });
 
-      setCases(casesRes.data ?? []);
+      // 5) Load Swahiba handlers (profiles) if we detected a handler field
+      if (handlerField) {
+        const ids = Array.from(
+          new Set(
+            (caseRows || [])
+              .map((c) => c?.[handlerField])
+              .filter((x) => typeof x === "string" && x.length > 0)
+          )
+        );
+
+        if (ids.length > 0) {
+          const { data: profiles, error: profErr } = await supabase
+            .from("profiles")
+            .select("id, full_name, email, phone_number, region, district, role")
+            .in("id", ids);
+
+          if (!profErr && profiles) {
+            const map = {};
+            profiles.forEach((p) => {
+              map[p.id] = p;
+            });
+            setHandlersById(map);
+          } else {
+            // keep cases visible even if profiles blocked by RLS
+            setHandlersById({});
+          }
+        } else {
+          setHandlersById({});
+        }
+      } else {
+        setHandlersById({});
+      }
+
+      setCases(caseRows ?? []);
       setTasks(taskRows);
       setLastRefresh(new Date().toISOString());
     } catch (e) {
@@ -326,7 +409,7 @@ export default function AdminPanel() {
       })
       .sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
 
-    const overdueCaseIds = new Set(overdueTasks.map((t) => t.case_id));
+    const overdueCaseIdsSet = new Set(overdueTasks.map((t) => t.case_id));
 
     const openCases = (cases || []).filter((c) => c.status !== "closed");
 
@@ -370,7 +453,7 @@ export default function AdminPanel() {
 
     return {
       openCasesCount: openCases.length,
-      overdueCount: overdueCaseIds.size,
+      overdueCount: overdueCaseIdsSet.size,
       new24hCount: new24h.length,
       referredTodayCount: referredToday.length,
       resolvedTodayCount: resolvedToday.length,
@@ -499,12 +582,8 @@ export default function AdminPanel() {
             >
               Back home
             </button>
-            <button
-              onClick={signOut}
-              className="rounded-2xl bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Sign out
-            </button>
+
+            {/* ✅ Sign out button removed as requested */}
           </div>
         </div>
       </div>
@@ -524,6 +603,10 @@ export default function AdminPanel() {
                 Signed in as <span className="font-semibold">{me.email}</span>
                 <span className="mx-2 text-slate-300">•</span>
                 Last refresh: <span className="font-semibold">{lastRefresh ? fmtDateTime(lastRefresh) : "—"}</span>
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Case handler field:{" "}
+                <span className="font-semibold">{caseHandlerField ? caseHandlerField : "not detected"}</span>
               </div>
             </div>
 
@@ -572,12 +655,7 @@ export default function AdminPanel() {
                 Swahiba Cases
               </button>
 
-              <button
-                onClick={signOut}
-                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-              >
-                Sign out
-              </button>
+              {/* ✅ Sign out removed as requested */}
             </div>
           </div>
 
@@ -680,20 +758,20 @@ export default function AdminPanel() {
                 subtitle="Oldest open tasks past due"
                 rows={digest.topOverdue}
                 badge="overdue"
-                onOpen={(id) => navigate(`/swahiba/cases/${id}`)}
+                onOpen={(id) => openCaseModalById(id)}
               />
               <DigestList
                 title="Due today"
                 subtitle="Open tasks due today"
                 rows={digest.topDueToday}
                 badge="today"
-                onOpen={(id) => navigate(`/swahiba/cases/${id}`)}
+                onOpen={(id) => openCaseModalById(id)}
               />
               <StaleList
                 title="Stale cases"
                 subtitle="No contact in >7 days (or never)"
                 rows={digest.staleCases}
-                onOpen={(id) => navigate(`/swahiba/cases/${id}`)}
+                onOpen={(id) => openCaseModalById(id)}
               />
             </div>
           )}
@@ -764,10 +842,10 @@ export default function AdminPanel() {
                         <div className="mt-2 text-sm text-slate-800 line-clamp-3">{n.note}</div>
                         {n.case_id ? (
                           <button
-                            onClick={() => navigate(`/swahiba/cases/${n.case_id}`)}
+                            onClick={() => openCaseModalById(n.case_id)}
                             className="mt-3 text-xs font-bold text-slate-900 hover:underline"
                           >
-                            Open case →
+                            View case →
                           </button>
                         ) : null}
                       </li>
@@ -785,7 +863,7 @@ export default function AdminPanel() {
           <div className="lg:col-span-2 rounded-3xl border border-slate-200 bg-white p-6">
             <div className="flex flex-col gap-1">
               <div className="text-lg font-bold text-slate-900">Case inbox</div>
-              <div className="text-sm text-slate-600">Admin overview (all cases). Open any case to operate.</div>
+              <div className="text-sm text-slate-600">Admin overview (all cases). View any case to see details + handler.</div>
             </div>
 
             <div className="mt-5 rounded-3xl border border-slate-200">
@@ -795,69 +873,91 @@ export default function AdminPanel() {
                 <div className="p-6 text-sm text-slate-600">No cases in this view.</div>
               ) : (
                 <ul className="divide-y divide-slate-200">
-                  {inboxRows.slice(0, 30).map((c) => (
-                    <li key={c.id} className="p-5 hover:bg-slate-50">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <div className="text-sm font-bold text-slate-900">
-                            {c.case_code || "—"}{" "}
-                            <span className="ml-2 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-                              {c.status || "—"}
-                            </span>
+                  {inboxRows.slice(0, 30).map((c) => {
+                    const handlerId = caseHandlerField ? c?.[caseHandlerField] : null;
+                    const handler = handlerId ? handlersById?.[handlerId] : null;
 
-                            <span
-                              className={[
-                                "ml-2 rounded-full px-2 py-1 text-xs font-semibold",
-                                String(c.risk_level || "").toLowerCase() === "high"
-                                  ? "bg-red-100 text-red-700"
-                                  : String(c.risk_level || "").toLowerCase() === "medium"
-                                  ? "bg-amber-100 text-amber-800"
-                                  : "bg-emerald-100 text-emerald-700",
-                              ].join(" ")}
+                    return (
+                      <li key={c.id} className="p-5 hover:bg-slate-50">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-slate-900">
+                              {c.case_code || "—"}{" "}
+                              <span className="ml-2 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                                {c.status || "—"}
+                              </span>
+
+                              <span
+                                className={[
+                                  "ml-2 rounded-full px-2 py-1 text-xs font-semibold",
+                                  String(c.risk_level || "").toLowerCase() === "high"
+                                    ? "bg-red-100 text-red-700"
+                                    : String(c.risk_level || "").toLowerCase() === "medium"
+                                    ? "bg-amber-100 text-amber-800"
+                                    : "bg-emerald-100 text-emerald-700",
+                                ].join(" ")}
+                              >
+                                {c.risk_level || "low"}
+                              </span>
+
+                              {c.outcome_status === "referred" && c.status !== "closed" ? (
+                                <span className="ml-2 rounded-full bg-indigo-100 px-2 py-1 text-xs font-semibold text-indigo-700">
+                                  referred
+                                </span>
+                              ) : null}
+
+                              {c.status !== "closed" && overdueCaseIds.has(c.id) ? (
+                                <span className="ml-2 rounded-full bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-700">
+                                  overdue
+                                </span>
+                              ) : null}
+                            </div>
+
+                            <div className="mt-2 text-sm text-slate-700">
+                              {c.nickname || "—"} • {c.location || "—"}
+                            </div>
+
+                            <div className="mt-1 text-xs text-slate-500">
+                              Updated: <span className="font-semibold">{fmtDateTime(c.updated_at)}</span>
+                            </div>
+
+                            {/* ✅ Show handler details */}
+                            <div className="mt-2 text-xs text-slate-600">
+                              Swahiba handling:{" "}
+                              {handler ? (
+                                <span className="font-semibold text-slate-900">
+                                  {handler.full_name || handler.email || handler.id}
+                                  {handler.email ? <span className="text-slate-500"> • {handler.email}</span> : null}
+                                </span>
+                              ) : handlerId ? (
+                                <span className="font-semibold text-slate-900">{handlerId}</span>
+                              ) : (
+                                <span className="text-slate-500">Unassigned / not available</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2 sm:justify-end">
+                            <button
+                              onClick={() => openCaseModal(c)}
+                              className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                             >
-                              {c.risk_level || "low"}
-                            </span>
+                              View details
+                            </button>
 
-                            {c.outcome_status === "referred" && c.status !== "closed" ? (
-                              <span className="ml-2 rounded-full bg-indigo-100 px-2 py-1 text-xs font-semibold text-indigo-700">
-                                referred
-                              </span>
-                            ) : null}
-
-                            {c.status !== "closed" && overdueCaseIds.has(c.id) ? (
-                              <span className="ml-2 rounded-full bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-700">
-                                overdue
-                              </span>
-                            ) : null}
-                          </div>
-
-                          <div className="mt-2 text-sm text-slate-700">
-                            {c.nickname || "—"} • {c.location || "—"}
-                          </div>
-
-                          <div className="mt-1 text-xs text-slate-500">
-                            Updated: <span className="font-semibold">{fmtDateTime(c.updated_at)}</span>
+                            {/* Optional: keep this if admin also has access to the Swahiba case route */}
+                            <button
+                              onClick={() => navigate(`/swahiba/cases/${c.id}`)}
+                              className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+                              title="Open full case page (if admin has access)"
+                            >
+                              Open case page
+                            </button>
                           </div>
                         </div>
-
-                        <div className="flex flex-wrap gap-2 sm:justify-end">
-                          <button
-                            onClick={() => navigate(`/swahiba/cases/${c.id}`)}
-                            className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-                          >
-                            Open case
-                          </button>
-                          <button
-                            onClick={() => navigate(`/swahiba/cases/${c.id}`)}
-                            className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-                            title="Open case then use WhatsApp button there"
-                          >
-                            Start WhatsApp
-                          </button>
-                        </div>
-                      </div>
-                    </li>
-                  ))}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -949,6 +1049,97 @@ export default function AdminPanel() {
 
       {/* ✅ Packs Manager Modal */}
       {showPacks ? <PacksManager onClose={() => setShowPacks(false)} /> : null}
+
+      {/* ✅ Case Details Modal */}
+      {showCaseModal ? (
+        <CaseDetailsModal
+          onClose={() => setShowCaseModal(false)}
+          caseRow={selectedCase}
+          caseHandlerField={caseHandlerField}
+          handlersById={handlersById}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** ---------------- Case Details Modal ---------------- */
+function CaseDetailsModal({ onClose, caseRow, caseHandlerField, handlersById }) {
+  const handlerId = caseHandlerField ? caseRow?.[caseHandlerField] : null;
+  const handler = handlerId ? handlersById?.[handlerId] : null;
+
+  return (
+    <div className="fixed inset-0 z-[90]">
+      <div className="absolute inset-0 bg-slate-950/50" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 w-[96vw] max-w-[900px] -translate-x-1/2 -translate-y-1/2">
+        <div className="rounded-3xl border border-slate-200 bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-200 p-5">
+            <div>
+              <div className="text-lg font-extrabold text-slate-900">Case details</div>
+              <div className="text-xs text-slate-500">
+                Case: <span className="font-semibold">{caseRow?.case_code || "—"}</span>
+              </div>
+            </div>
+
+            <button
+              onClick={onClose}
+              className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+            >
+              Close
+            </button>
+          </div>
+
+          {!caseRow ? (
+            <div className="p-6 text-sm text-slate-600">No case selected.</div>
+          ) : (
+            <div className="p-6">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Info label="Case code" value={caseRow.case_code} />
+                <Info label="Status" value={caseRow.status} />
+                <Info label="Risk" value={caseRow.risk_level} />
+                <Info label="Outcome" value={caseRow.outcome_status} />
+                <Info label="Nickname" value={caseRow.nickname} />
+                <Info label="Location" value={caseRow.location} />
+                <Info label="Tags" value={(caseRow.tags || []).join(", ") || "—"} />
+                <Info label="Last contact" value={fmtDateTime(caseRow.last_contact_at)} />
+                <Info label="Created" value={fmtDateTime(caseRow.created_at)} />
+                <Info label="Updated" value={fmtDateTime(caseRow.updated_at)} />
+              </div>
+
+              <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <div className="text-sm font-extrabold text-slate-900">Swahiba handling</div>
+                <div className="mt-1 text-xs text-slate-600">
+                  Field: <span className="font-semibold">{caseHandlerField || "not detected"}</span>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <Info label="Handler ID" value={handlerId || "—"} />
+                  <Info label="Name" value={handler?.full_name || "—"} />
+                  <Info label="Email" value={handler?.email || "—"} />
+                  <Info label="Phone" value={handler?.phone_number || "—"} />
+                  <Info label="Region" value={handler?.region || "—"} />
+                  <Info label="District" value={handler?.district || "—"} />
+                </div>
+
+                {!handler && handlerId ? (
+                  <div className="mt-3 text-xs text-amber-700">
+                    Handler profile could not be loaded. This is usually an RLS policy issue on <span className="font-semibold">profiles</span>.
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Info({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="text-xs font-bold text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-slate-900">{value ?? "—"}</div>
     </div>
   );
 }
@@ -984,7 +1175,6 @@ function PacksManager({ onClose }) {
       if (error) throw error;
       setProducts(data || []);
     } catch (e) {
-      // keep silent; still usable for pack list
       console.warn("Products load:", e?.message || e);
       setProducts([]);
     }
@@ -996,19 +1186,18 @@ function PacksManager({ onClose }) {
     setBusy(true);
 
     try {
-      let q = supabase
+      const { data, error } = await supabase
         .from("packs")
         .select("id, pack_no, pack_type, user_id, is_active, created_at, updated_at")
         .eq("pack_type", packType)
         .order("created_at", { ascending: false });
 
-      const { data, error } = await q;
       if (error) throw error;
 
+      const isSold = (p) => Boolean(p.user_id) || (p.is_active === false && !p.user_id);
       let list = data || [];
-
-      if (soldFilter === "sold") list = list.filter((p) => Boolean(p.user_id));
-      if (soldFilter === "not_sold") list = list.filter((p) => !p.user_id);
+      if (soldFilter === "sold") list = list.filter((p) => isSold(p));
+      if (soldFilter === "not_sold") list = list.filter((p) => !isSold(p));
 
       setPacks(list);
     } catch (e) {
@@ -1028,7 +1217,9 @@ function PacksManager({ onClose }) {
     try {
       const { data, error } = await supabase
         .from("pack_items")
-        .select("id, pack_id, product_id, qty, is_free, created_at, updated_at, products:products(id, product_name, price_tzs, image_url, image_path)")
+        .select(
+          "id, pack_id, product_id, qty, is_free, created_at, updated_at, products:products(id, product_name, price_tzs, image_url, image_path)"
+        )
         .eq("pack_id", packId)
         .order("created_at", { ascending: true });
 
@@ -1062,12 +1253,10 @@ function PacksManager({ onClose }) {
     setBusy(true);
 
     try {
-      // 1) generate pack_no using RPC (you created generate_pack_no())
       const { data: packNo, error: genErr } = await supabase.rpc("generate_pack_no");
       if (genErr) throw genErr;
       if (!packNo) throw new Error("Failed to generate pack number");
 
-      // 2) insert pack (available = user_id null)
       const { data, error } = await supabase
         .from("packs")
         .insert([{ pack_no: packNo, pack_type: packType, user_id: null, is_active: true }])
@@ -1094,7 +1283,6 @@ function PacksManager({ onClose }) {
     setBusy(true);
 
     try {
-      // delete pack (pack_items cascades if FK is cascade)
       const { error } = await supabase.from("packs").delete().eq("id", packId);
       if (error) throw error;
 
@@ -1118,7 +1306,10 @@ function PacksManager({ onClose }) {
     setBusy(true);
 
     try {
-      const { error } = await supabase.from("packs").update({ is_active: nextActive, updated_at: new Date().toISOString() }).eq("id", packId);
+      const { error } = await supabase
+        .from("packs")
+        .update({ is_active: nextActive, updated_at: new Date().toISOString() })
+        .eq("id", packId);
       if (error) throw error;
 
       setPacks((prev) => prev.map((p) => (p.id === packId ? { ...p, is_active: nextActive } : p)));
@@ -1153,12 +1344,7 @@ function PacksManager({ onClose }) {
         is_free: Boolean(addIsFree),
       };
 
-      const { data, error } = await supabase
-        .from("pack_items")
-        .upsert([payload], { onConflict: "pack_id,product_id,is_free" })
-        .select("id, pack_id, product_id, qty, is_free, created_at, updated_at, products:products(id, product_name, price_tzs, image_url, image_path)")
-        .single();
-
+      const { error } = await supabase.from("pack_items").upsert([payload], { onConflict: "pack_id,product_id,is_free" });
       if (error) throw error;
 
       setMsg("Item added");
@@ -1166,7 +1352,6 @@ function PacksManager({ onClose }) {
       setAddQty(1);
       setAddIsFree(false);
 
-      // refresh list (simpler + correct)
       await loadPackItems(selectedPackId);
     } catch (e) {
       setErr(e?.message || String(e));
@@ -1199,7 +1384,6 @@ function PacksManager({ onClose }) {
     setMsg("");
 
     try {
-      // easiest: delete + re-insert because unique constraint includes is_free
       const target = items.find((x) => x.id === itemId);
       if (!target) throw new Error("Item not found");
 
@@ -1249,19 +1433,14 @@ function PacksManager({ onClose }) {
 
   return (
     <div className="fixed inset-0 z-[80]">
-      {/* overlay */}
       <div className="absolute inset-0 bg-slate-950/50" onClick={onClose} />
 
-      {/* panel */}
       <div className="absolute left-1/2 top-1/2 w-[96vw] max-w-[1100px] -translate-x-1/2 -translate-y-1/2">
         <div className="rounded-3xl border border-slate-200 bg-white shadow-xl">
-          {/* Header */}
           <div className="flex flex-col gap-3 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="text-lg font-extrabold text-slate-900">Packs Manager</div>
-              <div className="text-xs text-slate-500">
-                Manage pack inventory + pack contents. (Sold = linked to a user)
-              </div>
+              <div className="text-xs text-slate-500">Manage pack inventory + pack contents. (Sold = linked to a user)</div>
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -1274,7 +1453,6 @@ function PacksManager({ onClose }) {
             </div>
           </div>
 
-          {/* Body */}
           <div className="p-5">
             {err ? (
               <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>
@@ -1283,7 +1461,6 @@ function PacksManager({ onClose }) {
               <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{msg}</div>
             ) : null}
 
-            {/* Controls */}
             <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
               <div className="grid gap-3 sm:grid-cols-3">
                 <div>
@@ -1378,9 +1555,7 @@ function PacksManager({ onClose }) {
               </div>
             </div>
 
-            {/* Content */}
             <div className="mt-5 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-              {/* Left: Packs list */}
               <div className="rounded-3xl border border-slate-200 bg-white">
                 <div className="flex items-center justify-between border-b border-slate-200 p-4">
                   <div>
@@ -1404,7 +1579,7 @@ function PacksManager({ onClose }) {
                 ) : (
                   <ul className="divide-y divide-slate-200">
                     {packs.slice(0, 50).map((p) => {
-                      const sold = Boolean(p.user_id);
+                      const sold = Boolean(p.user_id) || (p.is_active === false && !p.user_id);
                       const active = Boolean(p.is_active);
                       const selected = selectedPackId === p.id;
 
@@ -1474,7 +1649,6 @@ function PacksManager({ onClose }) {
                 <div className="border-t border-slate-200 p-3 text-xs text-slate-500">Showing up to 50 packs.</div>
               </div>
 
-              {/* Right: Pack contents editor */}
               <div className="rounded-3xl border border-slate-200 bg-white">
                 <div className="border-b border-slate-200 p-4">
                   <div className="text-sm font-extrabold text-slate-900">Pack contents</div>
@@ -1497,7 +1671,6 @@ function PacksManager({ onClose }) {
                   <div className="p-5 text-sm text-slate-600">Choose a pack on the left to edit its contents.</div>
                 ) : (
                   <div className="p-4">
-                    {/* Add item */}
                     <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                       <div className="text-xs font-bold text-slate-600">Add / update item</div>
 
@@ -1549,7 +1722,6 @@ function PacksManager({ onClose }) {
                       </div>
                     </div>
 
-                    {/* Items list */}
                     <div className="mt-4 rounded-3xl border border-slate-200">
                       {items.length === 0 ? (
                         <div className="p-4 text-sm text-slate-600">No items yet. Add products above.</div>
@@ -1628,8 +1800,9 @@ function PacksManager({ onClose }) {
             </div>
 
             <div className="mt-5 border-t border-slate-200 pt-4 text-xs text-slate-500">
-              Packs Manager uses tables: <span className="font-semibold">packs</span> + <span className="font-semibold">pack_items</span>.
-              If you see permission errors, make sure your admin RLS policies allow admin to select/insert/update/delete these tables.
+              Packs Manager uses tables: <span className="font-semibold">packs</span> +{" "}
+              <span className="font-semibold">pack_items</span>. If you see permission errors, make sure your admin RLS policies allow
+              admin to select/insert/update/delete these tables.
             </div>
           </div>
         </div>
@@ -1698,7 +1871,7 @@ function DigestList({ title, subtitle, rows, badge, onOpen }) {
                     onClick={() => onOpen(caseRow.id)}
                     className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                   >
-                    Open
+                    View
                   </button>
                 </div>
               </li>
@@ -1739,7 +1912,7 @@ function StaleList({ title, subtitle, rows, onOpen }) {
                     onClick={() => onOpen(c.id)}
                     className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                   >
-                    Open
+                    View
                   </button>
                 </div>
               </li>

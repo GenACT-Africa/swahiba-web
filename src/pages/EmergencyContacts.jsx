@@ -9,7 +9,7 @@ const i18n = {
   sw: {
     backHome: "Rudi",
     title: "Namba za dharura",
-    subtitle: "Weka hapa namba sahihi za dharura/hotline za Tanzania kwa MVP yako.",
+    subtitle: "Itawekwa hivi karibuni.",
     cardTitle: "Kama upo hatarini sasa hivi",
     li1: "Piga simu huduma za dharura",
     li2: "Wasiliana na mtu mzima/rafiki unayemuamini aliye karibu",
@@ -18,7 +18,7 @@ const i18n = {
   en: {
     backHome: "Back",
     title: "Emergency contacts",
-    subtitle: "Add the correct Tanzania hotlines/contacts here for your MVP.",
+    subtitle: "To be added soon.",
     cardTitle: "If you are in immediate danger",
     li1: "Call local emergency services",
     li2: "Contact a trusted adult/friend nearby",

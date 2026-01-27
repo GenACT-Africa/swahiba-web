@@ -406,6 +406,37 @@ export default function Result() {
 
   async function handleTalkToSwahiba() {
     try {
+      const intentMap = {
+        info: "info",
+        help: "service",
+        referral: "product",
+      };
+
+      const summary =
+        lang === "SW"
+          ? [
+              "Muhtasari wa uchunguzi:",
+              triage?.recommendation ? `Mapendekezo: ${triage.recommendation}` : null,
+              triage?.risk ? `Hatari: ${triage.risk}` : null,
+              answers?.urgency ? `Uharaka: ${answers.urgency}` : null,
+              Array.isArray(answers?.topics) && answers.topics.length
+                ? `Mada: ${answers.topics.join(", ")}`
+                : null,
+              answers?.area ? `Eneo: ${answers.area}` : null,
+            ]
+          : [
+              "Assessment summary:",
+              triage?.recommendation ? `Recommendation: ${triage.recommendation}` : null,
+              triage?.risk ? `Risk: ${triage.risk}` : null,
+              answers?.urgency ? `Urgency: ${answers.urgency}` : null,
+              Array.isArray(answers?.topics) && answers.topics.length
+                ? `Topics: ${answers.topics.join(", ")}`
+                : null,
+              answers?.area ? `Location: ${answers.area}` : null,
+            ];
+
+      const summaryText = summary.filter(Boolean).join("\n");
+
       const res = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dynamic-api`,
         {
@@ -428,6 +459,12 @@ export default function Result() {
       navigate("/talk", {
         state: {
           swahiba: data,
+          assessment: {
+            nickname: answers?.nickname || "",
+            location: answers?.area || "",
+            need: intentMap[answers?.intent] || "info",
+            description: summaryText || "",
+          },
         },
       });
     } catch (err) {

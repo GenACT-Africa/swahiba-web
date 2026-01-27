@@ -45,12 +45,102 @@ function riskBadgeClass(level) {
   return "bg-emerald-100 text-emerald-700";
 }
 
+/**
+ * ✅ IMPORTANT:
+ * We will decide visibility based on admin role:
+ * - Admin: sees ALL cases
+ * - Swahiba: sees ONLY cases assigned to them
+ *
+ * To avoid guessing column names, we detect which "assigned" field exists.
+ */
+const CASE_ASSIGNEE_FIELD_CANDIDATES = [
+  "assigned_swahiba_id",
+  "assigned_swahiba",
+  "swahiba_id",
+  "assigned_to",
+  "handler_id",
+  "handled_by",
+  "handled_by_id",
+  "peer_id",
+];
+
+const CASE_SELECT =
+  "id, case_code, nickname, location, risk_level, tags, status, outcome_status, last_contact_at, created_at, updated_at";
+
+/** Admin check that works across auth methods (profiles role preferred) */
+async function isAdminSafe(user) {
+  if (!user) return false;
+
+  // 1) Optional RPC if you created it
+  try {
+    const { data, error } = await supabase.rpc("is_admin");
+    if (!error && typeof data === "boolean") return data;
+  } catch {
+    // ignore
+  }
+
+  // 2) profiles.role / profiles.is_admin
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("role, is_admin")
+      .eq("id", user.id)
+      .single();
+
+    if (!error && data) {
+      const role = String(data.role || "").toLowerCase();
+      return data.is_admin === true || role === "admin";
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3) metadata fallback
+  const metaRole = String(
+    user.user_metadata?.role ||
+      user.app_metadata?.role ||
+      user.user_metadata?.user_role ||
+      user.app_metadata?.user_role ||
+      ""
+  ).toLowerCase();
+
+  return metaRole === "admin";
+}
+
+/**
+ * Detect which assignee field exists and load cases accordingly.
+ * - If admin => load all
+ * - Else => load only cases where assignee field == user.id
+ */
+async function loadCasesForUser({ userId, isAdmin }) {
+  // Try each candidate column until query succeeds
+  for (const field of CASE_ASSIGNEE_FIELD_CANDIDATES) {
+    // eslint-disable-next-line no-await-in-loop
+    const q = supabase.from("cases").select(`${CASE_SELECT}, ${field}`).order("created_at", { ascending: false });
+
+    // eslint-disable-next-line no-await-in-loop
+    const res = isAdmin ? await q : await q.eq(field, userId);
+
+    if (!res.error) {
+      return { rows: res.data ?? [], assigneeField: field };
+    }
+  }
+
+  // Fallback: load without assignee field (admin will still see all; swahiba might get blocked by RLS)
+  const fallback = await supabase.from("cases").select(CASE_SELECT).order("created_at", { ascending: false });
+  if (fallback.error) throw fallback.error;
+
+  return { rows: fallback.data ?? [], assigneeField: null };
+}
+
 export default function Cases() {
   const navigate = useNavigate();
 
   const [tab, setTab] = useState("new");
   const [q, setQ] = useState("");
   const [me, setMe] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [assigneeField, setAssigneeField] = useState(null);
 
   const [loading, setLoading] = useState(true);
   const [cases, setCases] = useState([]);
@@ -72,31 +162,57 @@ export default function Cases() {
   async function loadAll() {
     setErr("");
     setLoading(true);
+
     try {
+      // session/user
       const { data: s, error: sErr } = await supabase.auth.getSession();
       if (sErr) throw sErr;
+
       const user = s?.session?.user ?? null;
       setMe(user);
 
-      const { data: c, error: cErr } = await supabase
-        .from("cases")
-        .select(
-          "id, case_code, nickname, location, risk_level, tags, status, outcome_status, last_contact_at, created_at, updated_at"
-        )
-        .order("created_at", { ascending: false });
+      if (!user?.id) {
+        setCases([]);
+        setTasks([]);
+        setIsAdmin(false);
+        setAssigneeField(null);
+        setLastRefreshedAt(new Date().toISOString());
+        return;
+      }
 
-      if (cErr) throw cErr;
+      // role
+      const adminFlag = await isAdminSafe(user);
+      setIsAdmin(Boolean(adminFlag));
 
+      // cases (admin => all; swahiba => only assigned to them)
+      const { rows: cRows, assigneeField: detectedField } = await loadCasesForUser({
+        userId: user.id,
+        isAdmin: adminFlag,
+      });
+
+      setCases(cRows ?? []);
+      setAssigneeField(detectedField);
+
+      // tasks (nice-to-have)
+      // If RLS blocks it, just ignore.
       const { data: t, error: tErr } = await supabase
         .from("follow_up_tasks")
         .select("id, case_id, title, due_at, status, completed_at, created_at")
         .order("due_at", { ascending: true });
 
-      // digest is nice-to-have — don’t break if tasks table/policies block it
-      if (tErr) console.warn("Tasks load warning:", tErr.message);
+      if (tErr) {
+        console.warn("Tasks load warning:", tErr.message);
+        setTasks([]);
+      } else {
+        // If swahiba, keep digest aligned with visible cases (even if tasks policy is permissive)
+        if (!adminFlag) {
+          const visibleCaseIds = new Set((cRows || []).map((x) => x.id));
+          setTasks((t || []).filter((x) => visibleCaseIds.has(x.case_id)));
+        } else {
+          setTasks(t ?? []);
+        }
+      }
 
-      setCases(c ?? []);
-      setTasks(t ?? []);
       setLastRefreshedAt(new Date().toISOString());
     } catch (e) {
       setErr(e?.message || String(e));
@@ -142,7 +258,7 @@ export default function Cases() {
     const dueTodayCaseIds = new Set(dueTodayTasks.map((t) => t.case_id));
 
     const activeCases = (cases || []).filter((c) => c.status !== "closed");
-    const highRiskActive = activeCases.filter((c) => c.risk_level === "high");
+    const highRiskActive = activeCases.filter((c) => (c.risk_level || "").toLowerCase() === "high");
 
     const new24h = (cases || []).filter((c) => {
       const ts = new Date(c.created_at).getTime();
@@ -178,7 +294,7 @@ export default function Cases() {
       new: all.filter((c) => c.status === "new").length,
       active: all.filter((c) => c.status === "active").length,
       closed: all.filter((c) => c.status === "closed").length,
-      high: all.filter((c) => c.risk_level === "high" && c.status !== "closed").length,
+      high: all.filter((c) => (c.risk_level || "").toLowerCase() === "high" && c.status !== "closed").length,
     };
   }, [cases]);
 
@@ -199,7 +315,7 @@ export default function Cases() {
         (tab === "new" && c.status === "new") ||
         (tab === "active" && c.status === "active") ||
         (tab === "closed" && c.status === "closed") ||
-        (tab === "high" && c.risk_level === "high" && c.status !== "closed");
+        (tab === "high" && (c.risk_level || "").toLowerCase() === "high" && c.status !== "closed");
 
       return matchesQuery && matchesTab;
     });
@@ -224,8 +340,11 @@ export default function Cases() {
         .map((x) => x.trim())
         .filter(Boolean);
 
+      // Prefer the detected assignee field, otherwise default to your current schema
+      const assignField = assigneeField || "assigned_swahiba";
+
       const payload = {
-        assigned_swahiba: uid,
+        [assignField]: uid,
         nickname: newCase.nickname || null,
         location: newCase.location || null,
         risk_level: newCase.risk_level,
@@ -237,9 +356,7 @@ export default function Cases() {
       const { data: inserted, error } = await supabase
         .from("cases")
         .insert([payload])
-        .select(
-          "id, case_code, nickname, location, risk_level, tags, status, outcome_status, last_contact_at, created_at, updated_at"
-        )
+        .select(CASE_SELECT)
         .single();
 
       if (error) throw error;
@@ -268,6 +385,11 @@ export default function Cases() {
             </h1>
             <div className="mt-2 text-sm text-slate-600">
               Logged in as: <span className="font-semibold">{me?.email || "—"}</span>
+              <span className="mx-2 text-slate-300">•</span>
+              Role:{" "}
+              <span className="font-semibold">
+                {isAdmin ? "admin (all cases)" : "swahiba (assigned cases)"}
+              </span>
             </div>
           </div>
 
@@ -375,7 +497,14 @@ export default function Cases() {
           {loading ? (
             <div className="p-6 text-sm text-slate-600">Loading cases…</div>
           ) : filtered.length === 0 ? (
-            <div className="p-6 text-sm text-slate-600">No cases in this view yet.</div>
+            <div className="p-6 text-sm text-slate-600">
+              No cases in this view yet.
+              {!isAdmin && (
+                <div className="mt-2 text-xs text-slate-500">
+                  (As Swahiba, you only see cases assigned to you.)
+                </div>
+              )}
+            </div>
           ) : (
             <ul className="divide-y divide-slate-200">
               {filtered.map((c) => {
@@ -430,6 +559,17 @@ export default function Cases() {
             </ul>
           )}
         </div>
+
+        {/* Optional sign out (keep if you still need it)
+        <div className="mt-6">
+          <button
+            onClick={signOut}
+            className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+          >
+            Sign out
+          </button>
+        </div>
+        */}
       </div>
 
       {/* NEW CASE MODAL */}

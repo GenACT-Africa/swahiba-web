@@ -11,6 +11,10 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+
+# Supabase CLI temp state
+supabase/.temp/
 
 # Editor directories and files
 .vscode/*

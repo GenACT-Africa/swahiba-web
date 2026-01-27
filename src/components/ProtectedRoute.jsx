@@ -2,9 +2,14 @@ import React, { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 
-export default function ProtectedRoute({ children, requireAdmin = false }) {
+export default function ProtectedRoute({
+  children,
+  requireAdmin = false,
+  adminOnly = false,
+}) {
   const [loading, setLoading] = useState(true);
   const [authorized, setAuthorized] = useState(false);
+  const needsAdmin = requireAdmin || adminOnly;
 
   useEffect(() => {
     const checkAccess = async () => {
@@ -17,7 +22,7 @@ export default function ProtectedRoute({ children, requireAdmin = false }) {
         return;
       }
 
-      if (!requireAdmin) {
+      if (!needsAdmin) {
         setAuthorized(true);
         setLoading(false);
         return;
@@ -35,7 +40,7 @@ export default function ProtectedRoute({ children, requireAdmin = false }) {
     };
 
     checkAccess();
-  }, [requireAdmin]);
+  }, [needsAdmin]);
 
   if (loading) return null;
 

@@ -9,7 +9,7 @@ const i18n = {
   sw: {
     backHome: "← Rudi",
     title: "Sera ya matumizi ya data",
-    subtitle: "Haya ni maandishi ya mfano kwa MVP. Badilisha na sera yako rasmi.",
+    subtitle: "sera rasmi.",
     aTitle: "Kipaumbele ni kutokujulikana:",
     aBody: "Unaweza kutumia jina la utani. Hatuhitaji jina lako kamili.",
     bTitle: "Tunachokusanya:",
@@ -27,7 +27,7 @@ const i18n = {
   en: {
     backHome: "← Back",
     title: "Data use policy",
-    subtitle: "This is MVP placeholder content. Replace with your final policy text.",
+    subtitle: "Official policy.",
     aTitle: "Anonymous-first:",
     aBody: "You can use a nickname. We don’t require your full name.",
     bTitle: "What we collect:",

@@ -13,7 +13,7 @@ const EMPTY_FORM = {
   price_range: "",
   avg_rating: "",
   reviews_count: "",
-  image_path: "", // NEW
+  image_path: "",
   producer_group: "GenACT Youth Group",
   region: "Dar es Salaam",
   whatsapp_order_number: "",
@@ -42,7 +42,6 @@ function extFromFile(file) {
   return name.slice(dot + 1).toLowerCase();
 }
 
-// Lightweight “edit”: compress/resize client-side (no libraries)
 async function compressImage(file, { maxW = 1400, quality = 0.82 } = {}) {
   if (!file?.type?.startsWith("image/")) return file;
 
@@ -71,9 +70,7 @@ async function compressImage(file, { maxW = 1400, quality = 0.82 } = {}) {
   URL.revokeObjectURL(url);
 
   const mime = "image/jpeg";
-  const blob = await new Promise((resolve) =>
-    canvas.toBlob(resolve, mime, quality)
-  );
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, mime, quality));
 
   const outFile = new File([blob], file.name.replace(/\.\w+$/, ".jpg"), {
     type: mime,
@@ -108,10 +105,23 @@ export default function ManageProducts() {
   const [form, setForm] = useState(EMPTY_FORM);
   const closeBtnRef = useRef(null);
 
+  // scroll container ref (to reset scroll on open)
+  const modalBodyRef = useRef(null);
+
   // image upload state
   const [pickedFile, setPickedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  // prevent background scroll while modal is open
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
 
   // load auth + role
   useEffect(() => {
@@ -204,7 +214,12 @@ export default function ManageProducts() {
   }, [open]);
 
   useEffect(() => {
-    if (open) setTimeout(() => closeBtnRef.current?.focus(), 0);
+    if (!open) return;
+    setTimeout(() => {
+      closeBtnRef.current?.focus();
+      // reset internal scroll to top when opening
+      if (modalBodyRef.current) modalBodyRef.current.scrollTop = 0;
+    }, 0);
   }, [open]);
 
   function resetImageState() {
@@ -244,8 +259,6 @@ export default function ManageProducts() {
   }
 
   function currentImageUrl() {
-    // Backward compatibility: if you still have image_url in DB, it will show
-    // Prefer image_path going forward
     return form.image_path ? publicImageUrl(form.image_path) : "";
   }
 
@@ -254,7 +267,6 @@ export default function ManageProducts() {
 
     setUploading(true);
     try {
-      // “Edit” step: compress/resize before upload
       const edited = await compressImage(pickedFile);
 
       const ext = extFromFile(edited);
@@ -287,7 +299,6 @@ export default function ManageProducts() {
 
     setSaving(true);
     try {
-      // Upload image first (if user selected a file)
       const nextImagePath = await uploadImageIfNeeded(form.product_code.trim());
 
       const payload = {
@@ -335,9 +346,7 @@ export default function ManageProducts() {
         .eq("id", row.id);
 
       if (error) throw error;
-      setRows((prev) =>
-        (prev || []).map((p) => (p.id === row.id ? { ...p, is_active: !row.is_active } : p))
-      );
+      setRows((prev) => (prev || []).map((p) => (p.id === row.id ? { ...p, is_active: !row.is_active } : p)));
     } catch (e) {
       setErr(e?.message || String(e));
     }
@@ -449,9 +458,7 @@ export default function ManageProducts() {
         </div>
 
         {err && (
-          <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {err}
-          </div>
+          <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{err}</div>
         )}
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -483,9 +490,7 @@ export default function ManageProducts() {
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex gap-4">
                         <div className="h-16 w-16 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-                          {img ? (
-                            <img src={img} alt={p.product_name} className="h-full w-full object-cover" />
-                          ) : null}
+                          {img ? <img src={img} alt={p.product_name} className="h-full w-full object-cover" /> : null}
                         </div>
 
                         <div>
@@ -549,188 +554,205 @@ export default function ManageProducts() {
       {open && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
-          <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-3xl -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-7 shadow-xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-2xl tracking-tight text-slate-900" style={{ fontFamily: "ui-serif, Georgia, Cambria, serif" }}>
-                  {form.id ? "Edit product" : "Add product"}
+
+          {/* IMPORTANT: give the modal a max height and make it scrollable */}
+          <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-3xl -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white shadow-xl overflow-hidden">
+            {/* Header stays fixed */}
+            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div
+                    className="text-2xl tracking-tight text-slate-900"
+                    style={{ fontFamily: "ui-serif, Georgia, Cambria, serif" }}
+                  >
+                    {form.id ? "Edit product" : "Add product"}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    Upload an image (it will be stored in Supabase Storage).
+                  </div>
                 </div>
-                <div className="mt-1 text-sm text-slate-600">
-                  Upload an image (it will be stored in Supabase Storage).
-                </div>
+
+                <button
+                  ref={closeBtnRef}
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
+                >
+                  Close
+                </button>
               </div>
 
-              <button
-                ref={closeBtnRef}
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50"
-              >
-                Close
-              </button>
+              {formErr && (
+                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {formErr}
+                </div>
+              )}
             </div>
 
-            {formErr && (
-              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {formErr}
-              </div>
-            )}
+            {/* Scrollable body */}
+            <div
+              ref={modalBodyRef}
+              className="max-h-[calc(90vh-160px)] overflow-y-auto p-6"
+            >
+              {/* Image uploader */}
+              <div className="rounded-3xl border border-slate-200 p-5">
+                <div className="text-sm font-semibold text-slate-700">Product image</div>
 
-            {/* Image uploader */}
-            <div className="mt-6 rounded-3xl border border-slate-200 p-5">
-              <div className="text-sm font-semibold text-slate-700">Product image</div>
+                <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <div className="h-28 w-28 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                    {previewUrl ? (
+                      <img src={previewUrl} alt="Preview" className="h-full w-full object-cover" />
+                    ) : currentImageUrl() ? (
+                      <img src={currentImageUrl()} alt="Current" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="grid h-full w-full place-items-center text-xs text-slate-500">No image</div>
+                    )}
+                  </div>
 
-              <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-center">
-                <div className="h-28 w-28 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-                  {previewUrl ? (
-                    <img src={previewUrl} alt="Preview" className="h-full w-full object-cover" />
-                  ) : currentImageUrl() ? (
-                    <img src={currentImageUrl()} alt="Current" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="grid h-full w-full place-items-center text-xs text-slate-500">No image</div>
-                  )}
+                  <div className="flex-1">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        setPickedFile(file);
+                        if (previewUrl) URL.revokeObjectURL(previewUrl);
+                        setPreviewUrl(file ? URL.createObjectURL(file) : "");
+                      }}
+                      className="block w-full text-sm"
+                    />
+                    <p className="mt-2 text-xs text-slate-500">
+                      Tip: we auto-resize/compress the image before upload (lightweight “edit”).
+                    </p>
+                  </div>
                 </div>
+              </div>
 
-                <div className="flex-1">
+              {/* Form fields */}
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                <Field label="Product code (e.g., p7)" required>
                   <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] || null;
-                      setPickedFile(file);
-                      if (previewUrl) URL.revokeObjectURL(previewUrl);
-                      setPreviewUrl(file ? URL.createObjectURL(file) : "");
-                    }}
-                    className="block w-full text-sm"
+                    value={form.product_code}
+                    onChange={(e) => setForm((p) => ({ ...p, product_code: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
                   />
-                  <p className="mt-2 text-xs text-slate-500">
-                    Tip: we auto-resize/compress the image before upload (lightweight “edit”).
-                  </p>
+                </Field>
+
+                <Field label="Product name" required>
+                  <input
+                    value={form.product_name}
+                    onChange={(e) => setForm((p) => ({ ...p, product_name: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </Field>
+
+                <Field label="Price (TZS)">
+                  <input
+                    value={form.price_tzs}
+                    onChange={(e) => setForm((p) => ({ ...p, price_tzs: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </Field>
+
+                <Field label="Price range (optional)">
+                  <input
+                    value={form.price_range}
+                    onChange={(e) => setForm((p) => ({ ...p, price_range: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </Field>
+
+                <Field label="Average rating (e.g., 4.6)">
+                  <input
+                    value={form.avg_rating}
+                    onChange={(e) => setForm((p) => ({ ...p, avg_rating: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </Field>
+
+                <Field label="Reviews count">
+                  <input
+                    value={form.reviews_count}
+                    onChange={(e) => setForm((p) => ({ ...p, reviews_count: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </Field>
+
+                <Field label="Producer group">
+                  <input
+                    value={form.producer_group}
+                    onChange={(e) => setForm((p) => ({ ...p, producer_group: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </Field>
+
+                <Field label="Region">
+                  <input
+                    value={form.region}
+                    onChange={(e) => setForm((p) => ({ ...p, region: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </Field>
+
+                <Field label="WhatsApp order number (optional)">
+                  <input
+                    value={form.whatsapp_order_number}
+                    onChange={(e) => setForm((p) => ({ ...p, whatsapp_order_number: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </Field>
+
+                <Field label="Sort order">
+                  <input
+                    value={form.sort_order}
+                    onChange={(e) => setForm((p) => ({ ...p, sort_order: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </Field>
+
+                <div className="sm:col-span-2">
+                  <label className="text-sm font-semibold text-slate-700">Description</label>
+                  <textarea
+                    rows={3}
+                    value={form.description}
+                    onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  />
+                </div>
+
+                <div className="sm:col-span-2 flex items-center gap-3">
+                  <input
+                    id="is_active"
+                    type="checkbox"
+                    checked={!!form.is_active}
+                    onChange={(e) => setForm((p) => ({ ...p, is_active: e.target.checked }))}
+                  />
+                  <label htmlFor="is_active" className="text-sm font-semibold text-slate-700">
+                    Active (visible to public)
+                  </label>
                 </div>
               </div>
             </div>
 
-            {/* Form fields */}
-            <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <Field label="Product code (e.g., p7)" required>
-                <input
-                  value={form.product_code}
-                  onChange={(e) => setForm((p) => ({ ...p, product_code: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <Field label="Product name" required>
-                <input
-                  value={form.product_name}
-                  onChange={(e) => setForm((p) => ({ ...p, product_name: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <Field label="Price (TZS)">
-                <input
-                  value={form.price_tzs}
-                  onChange={(e) => setForm((p) => ({ ...p, price_tzs: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <Field label="Price range (optional)">
-                <input
-                  value={form.price_range}
-                  onChange={(e) => setForm((p) => ({ ...p, price_range: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <Field label="Average rating (e.g., 4.6)">
-                <input
-                  value={form.avg_rating}
-                  onChange={(e) => setForm((p) => ({ ...p, avg_rating: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <Field label="Reviews count">
-                <input
-                  value={form.reviews_count}
-                  onChange={(e) => setForm((p) => ({ ...p, reviews_count: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <Field label="Producer group">
-                <input
-                  value={form.producer_group}
-                  onChange={(e) => setForm((p) => ({ ...p, producer_group: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <Field label="Region">
-                <input
-                  value={form.region}
-                  onChange={(e) => setForm((p) => ({ ...p, region: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <Field label="WhatsApp order number (optional)">
-                <input
-                  value={form.whatsapp_order_number}
-                  onChange={(e) => setForm((p) => ({ ...p, whatsapp_order_number: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <Field label="Sort order">
-                <input
-                  value={form.sort_order}
-                  onChange={(e) => setForm((p) => ({ ...p, sort_order: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
-              </Field>
-
-              <div className="sm:col-span-2">
-                <label className="text-sm font-semibold text-slate-700">Description</label>
-                <textarea
-                  rows={3}
-                  value={form.description}
-                  onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
-                />
+            {/* Footer stays fixed */}
+            <div className="sticky bottom-0 border-t border-slate-200 bg-white p-6">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={saving || uploading}
+                  onClick={save}
+                  className="rounded-2xl bg-amber-500 px-5 py-3 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
+                >
+                  {uploading ? "Uploading image…" : saving ? "Saving…" : "Save product"}
+                </button>
               </div>
-
-              <div className="sm:col-span-2 flex items-center gap-3">
-                <input
-                  id="is_active"
-                  type="checkbox"
-                  checked={!!form.is_active}
-                  onChange={(e) => setForm((p) => ({ ...p, is_active: e.target.checked }))}
-                />
-                <label htmlFor="is_active" className="text-sm font-semibold text-slate-700">
-                  Active (visible to public)
-                </label>
-              </div>
-            </div>
-
-            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={saving || uploading}
-                onClick={save}
-                className="rounded-2xl bg-amber-500 px-5 py-3 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
-              >
-                {uploading ? "Uploading image…" : saving ? "Saving…" : "Save product"}
-              </button>
             </div>
           </div>
         </div>
