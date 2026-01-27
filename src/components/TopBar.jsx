@@ -43,10 +43,26 @@ export default function TopBar({ showTalkButton = true }) {
   }, []);
 
   useEffect(() => {
-    const handleResize = () => setIsCompactHeight(window.innerHeight <= 700);
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    const computeCompact = () => {
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      setIsCompactHeight(height <= 700);
+    };
+    computeCompact();
+    const vv = window.visualViewport;
+    window.addEventListener("resize", computeCompact);
+    window.addEventListener("orientationchange", computeCompact);
+    if (vv) {
+      vv.addEventListener("resize", computeCompact);
+      vv.addEventListener("scroll", computeCompact);
+    }
+    return () => {
+      window.removeEventListener("resize", computeCompact);
+      window.removeEventListener("orientationchange", computeCompact);
+      if (vv) {
+        vv.removeEventListener("resize", computeCompact);
+        vv.removeEventListener("scroll", computeCompact);
+      }
+    };
   }, []);
 
   const computeUnread = useCallback((list) => {
