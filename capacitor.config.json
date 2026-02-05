@@ -1,0 +1,6 @@
+{
+  "appId": "online.swahiba.app",
+  "appName": "SWAHIBA",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

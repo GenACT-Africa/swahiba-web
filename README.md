@@ -14,3 +14,19 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+## Android (Capacitor) build
+
+### Build + open Android Studio
+1. `npm install`
+2. `npm run build:android`
+3. `npx cap open android`
+
+Notes
+- `google-services.json` must live at `android/app/google-services.json`.
+- The app package is `online.swahiba.app`.
+
+### Play Store checklist
+- Ensure versionCode/versionName updated in Android Studio.
+- Generate a signed AAB (Build > Generate Signed Bundle / APK).
+- Verify package: `online.swahiba.app`.

@@ -1,11 +1,18 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { registerSW } from "virtual:pwa-register";
 import App from "./App.jsx";
 import { LanguageProvider } from "./context/LanguageContext.jsx";
+import { initPushNotifications } from "./push/initPush.js";
 import "./index.css";
 
 const missingEnv =
   !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!missingEnv) {
+  registerSW({ immediate: true });
+  initPushNotifications();
+}
 
 function MissingEnvScreen() {
   return (

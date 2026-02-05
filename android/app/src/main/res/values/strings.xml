@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SWAHIBA</string>
+    <string name="title_activity_main">SWAHIBA</string>
+    <string name="package_name">online.swahiba.app</string>
+    <string name="custom_url_scheme">online.swahiba.app</string>
+</resources>
